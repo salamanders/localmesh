@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!-- Ignore the specific SLF4J version warning -->
+    <issue id="GradleDependency">
+        <ignore regexp="org.slf4j:slf4j-simple" />
+    </issue>
+</lint>
