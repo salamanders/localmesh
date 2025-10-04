@@ -3,6 +3,7 @@ package info.benjaminhill.localmesh
 import info.benjaminhill.localmesh.mesh.P2PBridgeService
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.fromFileExtension
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.install
 import io.ktor.server.cio.CIO
@@ -12,11 +13,13 @@ import io.ktor.server.request.receive
 import io.ktor.server.request.receiveParameters
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondRedirect
+import io.ktor.server.response.respondOutputStream
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
 import kotlinx.serialization.Serializable
+import java.io.IOException
 import java.net.BindException
 import java.text.DateFormat
 import java.util.Date
@@ -112,6 +115,52 @@ class LocalHttpServer(
                     service.sendMessage(message)
                 }
                 call.respondRedirect("/test")
+            }
+
+            get("/{path...}") {
+                var path = call.parameters.getAll("path")?.joinToString("/") ?: return@get
+                if (path.isBlank() || path == "/") {
+                    path = "index.html" // Default to index.html for root
+                }
+
+                // Check if the path refers to a directory in assets and append index.html
+                try {
+                    val assetManager = service.applicationContext.assets
+                    val assetPathPrefix = "web/"
+                    val fullAssetPath = assetPathPrefix + path
+                    if (assetManager.list(fullAssetPath)?.isNotEmpty() == true) {
+                        // It's a directory, try to serve index.html from it
+                        path += "/index.html"
+                    }
+                } catch (e: IOException) {
+                    // Not a directory, or doesn't exist in assets, continue
+                }
+
+                val contentType = ContentType.fromFileExtension(path).firstOrNull() ?: ContentType.Application.OctetStream
+                val cacheDir = java.io.File(service.cacheDir, "web_cache")
+                val safePath = path.substringAfterLast('/').substringAfterLast('\\')
+                val cachedFile = java.io.File(cacheDir, safePath)
+
+                if (cachedFile.exists() && cachedFile.isFile) {
+                    logMessageCallback("Serving from cache: $path")
+                    call.respondOutputStream(contentType) {
+                        cachedFile.inputStream().copyTo(this)
+                    }
+                    return@get
+                }
+
+                try {
+                    val assetPath = "web/$path"
+                    service.applicationContext.assets.open(assetPath).use { inputStream ->
+                        logMessageCallback("Serving from assets: $path")
+                        call.respondOutputStream(contentType) {
+                            inputStream.copyTo(this)
+                        }
+                    }
+                } catch (e: java.io.IOException) {
+                    logMessageCallback("File not found in cache or assets: $path")
+                    call.respond(HttpStatusCode.NotFound, "File not found: $path")
+                }
             }
         }
     }

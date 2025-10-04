@@ -40,6 +40,9 @@
         <service
             android:name=".mesh.P2PBridgeService"
             android:foregroundServiceType="connectedDevice" />
+        <activity
+            android:name=".WebViewActivity"
+            android:theme="@style/Theme.LocalMesh" />
     </application>
 
 </manifest>

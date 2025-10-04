@@ -20,7 +20,9 @@ import info.benjaminhill.localmesh.R
 import info.benjaminhill.localmesh.ui.AppStateHolder
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import java.io.File
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 
 class P2PBridgeService : Service() {
@@ -40,6 +42,7 @@ class P2PBridgeService : Service() {
     private lateinit var logFileWriter: LogFileWriter
 
     private val receivedMessages = ConcurrentLinkedQueue<Message>()
+    private val incomingFilePayloads = ConcurrentHashMap<Long, String>()
 
     override fun onCreate() {
         super.onCreate()
@@ -49,16 +52,84 @@ class P2PBridgeService : Service() {
             endpointName = UUID.randomUUID().toString().substring(0, 4)
             nearbyConnectionsManager = NearbyConnectionsManager(this, endpointName, {
                 AppStateHolder.statusText.value = "Running - $it Peers"
-            }, ::sendLogMessage) { _, payload ->
+            }, ::sendLogMessage) { endpointId, payload ->
                 try {
-                    val message = Json.decodeFromString<Message>(payload.toString(Charsets.UTF_8))
-                    if (receivedMessages.size >= MAX_QUEUE_SIZE) {
-                        receivedMessages.poll()
+                    when (payload.type) {
+                        com.google.android.gms.nearby.connection.Payload.Type.BYTES -> {
+                            val message = Json.decodeFromString<Message>(payload.asBytes()!!.toString(Charsets.UTF_8))
+                            if (receivedMessages.size >= MAX_QUEUE_SIZE) {
+                                receivedMessages.poll()
+                            }
+                            receivedMessages.add(message)
+                            sendLogMessage("Received message: $message")
+
+                            if (message.payload.startsWith("display ")) {
+                                val urlPath = message.payload.substringAfter("display ").trim()
+                                if (urlPath.isNotBlank()) {
+                                    val safeUrlPath = if (urlPath.startsWith("/")) urlPath else "/$urlPath"
+                                    val fullUrl = "http://localhost:${LocalHttpServer.PORT}$safeUrlPath"
+                                    sendLogMessage("Received display command, opening $fullUrl")
+                                    val intent = Intent(applicationContext, info.benjaminhill.localmesh.WebViewActivity::class.java).apply {
+                                        putExtra(info.benjaminhill.localmesh.WebViewActivity.EXTRA_URL, fullUrl)
+                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    }
+                                    startActivity(intent)
+                                }
+                            } else if (message.payload.startsWith("content ")) {
+                                val parts = message.payload.split(Regex("\\s+"), 3)
+                                if (parts.size == 3 && parts[0] == "content") {
+                                    val filename = parts[1].substringAfterLast('/').substringAfterLast('\\')
+                                    val fileContent = parts[2]
+                                    if (filename.isNotBlank()) {
+                                        try {
+                                            val cacheDir = File(applicationContext.cacheDir, "web_cache")
+                                            if (!cacheDir.exists()) {
+                                                cacheDir.mkdirs()
+                                            }
+                                            val file = File(cacheDir, filename)
+                                            file.writeText(fileContent)
+                                            sendLogMessage("Cached file updated: $filename")
+                                        } catch (e: Exception) {
+                                            sendLogMessage("Error caching file '$filename': ${e.message}")
+                                        }
+                                    }
+                                }
+                            } else if (message.payload.startsWith("file_info ")) {
+                                val parts = message.payload.split(Regex("\\s+"), 3)
+                                if (parts.size == 3 && parts[0] == "file_info") {
+                                    val filename = parts[1].substringAfterLast('/').substringAfterLast('\\')
+                                    val payloadId = parts[2].toLong()
+                                    incomingFilePayloads[payloadId] = filename
+                                    sendLogMessage("Received file info: $filename (payloadId: $payloadId)")
+                                }
+                            }
+                        }
+                        com.google.android.gms.nearby.connection.Payload.Type.STREAM -> {
+                            val filename = incomingFilePayloads.remove(payload.id)
+                            if (filename != null) {
+                                try {
+                                    val cacheDir = File(applicationContext.cacheDir, "web_cache")
+                                    if (!cacheDir.exists()) {
+                                        cacheDir.mkdirs()
+                                    }
+                                    val file = File(cacheDir, filename)
+                                    payload.asStream()?.asInputStream()?.use { inputStream ->
+                                        file.outputStream().use { outputStream ->
+                                            inputStream.copyTo(outputStream)
+                                        }
+                                    }
+                                    sendLogMessage("File received and cached: $filename")
+                                } catch (e: Exception) {
+                                    sendLogMessage("Error receiving file '$filename': ${e.message}")
+                                }
+                            } else {
+                                sendLogMessage("Received stream payload with unknown ID: ${payload.id}")
+                            }
+                        }
+                        else -> sendLogMessage("Received unsupported payload type: ${payload.type}")
                     }
-                    receivedMessages.add(message)
-                    sendLogMessage("Received message: $message")
                 } catch (e: Exception) {
-                    sendLogMessage("Failed to parse message: ${e.message}")
+                    sendLogMessage("Failed to process payload: ${e.message}")
                 }
             }
             localHttpServer = LocalHttpServer(this, ::sendLogMessage)
@@ -99,7 +170,23 @@ class P2PBridgeService : Service() {
         )
         val payload =
             Json.encodeToString(Message.serializer(), messageObject).toByteArray(Charsets.UTF_8)
-        nearbyConnectionsManager.sendPayload(payload)
+        nearbyConnectionsManager.broadcastBytes(payload)
+    }
+
+    fun sendFile(file: File) {
+        val payloadId = com.google.android.gms.nearby.connection.Payload.fromStream(file.inputStream()).id
+        val metadata = Json.encodeToString(
+            Message.serializer(),
+            Message(
+                from = endpointName,
+                sequence = System.currentTimeMillis(),
+                timestamp = System.currentTimeMillis(),
+                payload = "file_info ${file.name} $payloadId"
+            )
+        ).toByteArray(Charsets.UTF_8)
+
+        nearbyConnectionsManager.sendPayload(nearbyConnectionsManager.getConnectedPeerIds(), com.google.android.gms.nearby.connection.Payload.fromBytes(metadata))
+        nearbyConnectionsManager.sendPayload(nearbyConnectionsManager.getConnectedPeerIds(), com.google.android.gms.nearby.connection.Payload.fromStream(file.inputStream()))
     }
 
     fun getConnectedPeerCount(): Int = nearbyConnectionsManager.getConnectedPeerCount()

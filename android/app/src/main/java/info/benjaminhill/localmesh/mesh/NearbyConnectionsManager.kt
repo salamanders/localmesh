@@ -29,7 +29,7 @@ class NearbyConnectionsManager(
     private val endpointName: String,
     private val peerCountUpdateCallback: (Int) -> Unit,
     private val logMessageCallback: (String) -> Unit,
-    private val payloadReceivedCallback: (endpointId: String, payload: ByteArray) -> Unit
+    private val payloadReceivedCallback: (endpointId: String, payload: Payload) -> Unit
 ) {
 
     private val connectionsClient: ConnectionsClient by lazy {
@@ -55,16 +55,20 @@ class NearbyConnectionsManager(
         retryCounts.clear()
     }
 
-    fun sendPayload(payload: ByteArray) {
+    fun sendPayload(endpointIds: List<String>, payload: Payload) {
         try {
-            logMessageCallback("NearbyConnectionsManager.sendPayload()")
-            connectionsClient.sendPayload(connectedEndpoints.toList(), Payload.fromBytes(payload))
+            logMessageCallback("NearbyConnectionsManager.sendPayload() to ${endpointIds.size} endpoints.")
+            connectionsClient.sendPayload(endpointIds, payload)
                 .addOnFailureListener { e ->
-                    logMessageCallback("Failed to send payload: ${e.message}")
+                    logMessageCallback("Failed to send payload ${payload.id}: ${e.message}")
                 }
         } catch (e: Exception) {
             logMessageCallback("Exception in sendPayload: ${e.message}")
         }
+    }
+
+    fun broadcastBytes(payload: ByteArray) {
+        sendPayload(connectedEndpoints.toList(), Payload.fromBytes(payload))
     }
 
     fun getConnectedPeerCount(): Int = connectedEndpoints.size
@@ -115,9 +119,7 @@ class NearbyConnectionsManager(
     private val payloadCallback = object : PayloadCallback() {
         override fun onPayloadReceived(endpointId: String, payload: Payload) {
             try {
-                if (payload.type == Payload.Type.BYTES) {
-                    payload.asBytes()?.let { payloadReceivedCallback(endpointId, it) }
-                }
+                payloadReceivedCallback(endpointId, payload)
             } catch (e: Exception) {
                 logMessageCallback("Exception in onPayloadReceived: ${e.message}")
             }
