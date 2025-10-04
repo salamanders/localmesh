@@ -3,6 +3,9 @@ package info.benjaminhill.localmesh
 import info.benjaminhill.localmesh.mesh.P2PBridgeService
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.content.PartData
+import io.ktor.http.content.forEachPart
+import io.ktor.http.content.streamProvider
 import io.ktor.http.fromFileExtension
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.install
@@ -10,6 +13,7 @@ import io.ktor.server.cio.CIO
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.request.receive
+import io.ktor.server.request.receiveMultipart
 import io.ktor.server.request.receiveParameters
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondRedirect
@@ -117,6 +121,33 @@ class LocalHttpServer(
                 call.respondRedirect("/test")
             }
 
+            post("/send-file") {
+                var tempFile: java.io.File? = null
+                try {
+                    val multipart = call.receiveMultipart()
+                    multipart.forEachPart { part ->
+                        if (part is PartData.FileItem) {
+                            val originalFileName = part.originalFileName ?: "unknown.bin"
+                            val fileBytes = part.streamProvider().readBytes()
+                            tempFile = java.io.File(
+                                service.cacheDir,
+                                "upload_temp_${System.currentTimeMillis()}_$originalFileName"
+                            ).apply {
+                                writeBytes(fileBytes)
+                            }
+                            service.sendFile(tempFile!!)
+                        }
+                        part.dispose()
+                    }
+                    call.respondRedirect("/test", permanent = false)
+                } catch (e: Exception) {
+                    logMessageCallback("Error handling file upload: ${e.message}")
+                    call.respond(HttpStatusCode.InternalServerError, "Error processing file")
+                } finally {
+                    tempFile?.delete()
+                }
+            }
+
             get("/{path...}") {
                 var path = call.parameters.getAll("path")?.joinToString("/") ?: return@get
                 if (path.isBlank() || path == "/") {
@@ -198,8 +229,7 @@ class LocalHttpServer(
                     #messages { border: 1px solid #ccc; padding: 1em; margin-top: 1em; min-height: 100px; max-height: 300px; overflow-y: auto; }
                     .message { border-bottom: 1px solid #eee; padding: 0.5em; }
                     form { margin-top: 1em; }
-                    input[type="text"] { width: 70%; padding: 0.5em; }
-                    button { padding: 0.5em 1em; }
+                    input { margin-bottom: 0.5em; }
                 </style>
             </head>
             <body>
@@ -212,6 +242,12 @@ class LocalHttpServer(
                 <form action="/send-message-from-test" method="post">
                     <input type="text" name="messageInput" size="40" placeholder="Enter message to send">
                     <button type="submit">Send</button>
+                </form>
+
+                <h2>Send File</h2>
+                <form action="/send-file" method="post" enctype="multipart/form-data">
+                    <input type="file" name="file">
+                    <button type="submit">Send File</button>
                 </form>
                 
                 <h2>Received Messages</h2>
