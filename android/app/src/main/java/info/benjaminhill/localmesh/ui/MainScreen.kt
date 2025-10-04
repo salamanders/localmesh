@@ -3,6 +3,7 @@ package info.benjaminhill.localmesh.ui
 import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -11,7 +12,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.text.ClickableText
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -22,7 +22,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
-import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -131,13 +134,35 @@ fun ServerAddressDisplay(serverUrl: String?) {
         return
     }
     val uriHandler = LocalUriHandler.current
-    val annotatedString = remember(serverUrl) {
-        AnnotatedString(serverUrl)
+    val primaryColor = MaterialTheme.colorScheme.primary
+    val annotatedString = remember(serverUrl, primaryColor) {
+        buildAnnotatedString {
+            withStyle(
+                style = SpanStyle(
+                    color = primaryColor,
+                    textDecoration = TextDecoration.Underline
+                )
+            ) {
+                append(serverUrl)
+            }
+            addStringAnnotation(
+                tag = "URL",
+                annotation = serverUrl,
+                start = 0,
+                end = serverUrl.length
+            )
+        }
     }
-    ClickableText(
+
+    Text(
         text = annotatedString,
-        onClick = { uriHandler.openUri(serverUrl) },
-        style = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.primary)
+        style = MaterialTheme.typography.bodyLarge,
+        modifier = Modifier.clickable {
+            annotatedString.getStringAnnotations("URL", 0, annotatedString.length)
+                .firstOrNull()?.let { stringAnnotation ->
+                    uriHandler.openUri(stringAnnotation.item)
+                }
+        }
     )
 }
 

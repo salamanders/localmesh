@@ -97,7 +97,8 @@ class P2PBridgeService : Service() {
             timestamp = System.currentTimeMillis(),
             payload = message
         )
-        val payload = Json.encodeToString(Message.serializer(), messageObject).toByteArray(Charsets.UTF_8)
+        val payload =
+            Json.encodeToString(Message.serializer(), messageObject).toByteArray(Charsets.UTF_8)
         nearbyConnectionsManager.sendPayload(payload)
     }
 
@@ -117,7 +118,8 @@ class P2PBridgeService : Service() {
         AppStateHolder.statusText.value = "Starting..."
 
         if (!checkHardwareAndPermissions()) {
-            AppStateHolder.currentState.value = ServiceState.Error("Hardware or permissions not met.")
+            AppStateHolder.currentState.value =
+                ServiceState.Error("Hardware or permissions not met.")
             AppStateHolder.statusText.value = "Error: Check permissions"
             stopSelf()
             return
@@ -125,7 +127,8 @@ class P2PBridgeService : Service() {
 
         createNotificationChannel()
         val notificationIntent = Intent(this, MainActivity::class.java)
-        val pendingIntent = PendingIntent.getActivity(this, 0, notificationIntent, PendingIntent.FLAG_IMMUTABLE)
+        val pendingIntent =
+            PendingIntent.getActivity(this, 0, notificationIntent, PendingIntent.FLAG_IMMUTABLE)
 
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("P2P Web Bridge")
