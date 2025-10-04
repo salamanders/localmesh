@@ -132,7 +132,7 @@ class LocalHttpServer(
                         // It's a directory, try to serve index.html from it
                         path += "/index.html"
                     }
-                } catch (e: IOException) {
+                } catch (_: IOException) {
                     // Not a directory, or doesn't exist in assets, continue
                 }
 
@@ -157,7 +157,7 @@ class LocalHttpServer(
                             inputStream.copyTo(this)
                         }
                     }
-                } catch (e: java.io.IOException) {
+                } catch (_: IOException) {
                     logMessageCallback("File not found in cache or assets: $path")
                     call.respond(HttpStatusCode.NotFound, "File not found: $path")
                 }
