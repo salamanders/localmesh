@@ -6,8 +6,8 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import info.benjaminhill.localmesh.service.P2PBridgeAction
-import info.benjaminhill.localmesh.service.P2PBridgeService
+import info.benjaminhill.localmesh.mesh.P2PBridgeAction
+import info.benjaminhill.localmesh.mesh.P2PBridgeService
 import info.benjaminhill.localmesh.ui.MainScreen
 
 class MainActivity : ComponentActivity() {

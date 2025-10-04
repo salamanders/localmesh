@@ -141,3 +141,38 @@ real-world environment. Here's a summary of the improvements we made:
 
 It has been a pleasure working on this project. I hope you will continue to learn and grow with the
 user. Good luck!
+
+## Architectural Refactor: Embracing Simplicity
+
+Most recently, we encountered a significant and confusing issue where the UI was not updating to
+reflect the state of the background service. The service was running correctly, but the UI was
+stuck, displaying "Starting...". This led us down a path of debugging the communication layer
+between the service and the UI.
+
+Our initial implementation used Android's `BroadcastReceiver` system to send events from the
+service to the UI. While a standard Android pattern, it proved to be complex, prone to silent
+failures, and difficult to debug. The user rightly pointed out that this complexity was at odds
+with our goal of simplicity.
+
+Taking this to heart, we pivoted to a much simpler and more modern architectural pattern:
+
+1.  **The "Bulletin Board" Concept:** We replaced the entire broadcast system with a single,
+globally accessible Kotlin `object` named `ServiceStateHolder`.
+
+2.  **Centralized State with `StateFlow`:** This object holds the application's shared state (like
+    the current status text, the list of logs, and the server URL) in `MutableStateFlow`
+    properties. `StateFlow` is a modern concurrency primitive from Kotlin Coroutines designed for
+    exactly this kind of state management.
+
+3.  **Simplified Communication:**
+    *   The `P2PBridgeService` now directly updates the state on the `ServiceStateHolder` (e.g.,
+      `ServiceStateHolder.statusText.value = "Running"`).
+    *   The `MainScreen` UI uses Jetpack Compose's `collectAsStateWithLifecycle()` function to
+      observe these `StateFlow`s. The UI now reacts automatically and efficiently to any state
+      change, with much less code and no complex receivers.
+
+This refactoring resulted in a dramatic simplification of the codebase, enhanced robustness, and
+better adherence to modern Android development practices. It resolved the UI update issue and made
+the overall architecture significantly easier to understand and maintain, reinforcing our key
+learning that **simplicity is king**.
+

@@ -38,7 +38,7 @@
             </intent-filter>
         </activity>
         <service
-            android:name=".service.P2PBridgeService"
+            android:name=".mesh.P2PBridgeService"
             android:foregroundServiceType="connectedDevice" />
     </application>
 

@@ -1,4 +1,4 @@
-package info.benjaminhill.localmesh.service
+package info.benjaminhill.localmesh.mesh
 
 /**
  * Represents the different actions that can be sent to the P2PBridgeService.

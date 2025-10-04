@@ -1,4 +1,4 @@
-package info.benjaminhill.localmesh.service
+package info.benjaminhill.localmesh
 
 import android.content.Context
 import java.io.File

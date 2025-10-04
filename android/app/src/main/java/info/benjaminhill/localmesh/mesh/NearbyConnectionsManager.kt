@@ -1,4 +1,4 @@
-package info.benjaminhill.localmesh.service
+package info.benjaminhill.localmesh.mesh
 
 import android.content.Context
 import com.google.android.gms.nearby.Nearby
@@ -119,11 +119,15 @@ class NearbyConnectionsManager(
 
     private val payloadCallback = object : PayloadCallback() {
         override fun onPayloadReceived(endpointId: String, payload: Payload) {
-            logMessageCallback("onPayloadReceived: endpointId=$endpointId, payload=$payload")
-            if (payload.type == Payload.Type.BYTES) {
-                payload.asBytes()?.let {
-                    payloadReceivedCallback(endpointId, it)
+            try {
+                logMessageCallback("onPayloadReceived: endpointId=$endpointId, payload=$payload")
+                if (payload.type == Payload.Type.BYTES) {
+                    payload.asBytes()?.let {
+                        payloadReceivedCallback(endpointId, it)
+                    }
                 }
+            } catch (e: Exception) {
+                logMessageCallback("Exception in onPayloadReceived: ${e.message}")
             }
         }
 
