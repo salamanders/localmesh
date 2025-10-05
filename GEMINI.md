@@ -8,6 +8,19 @@ LocalMesh is a native Android application that functions as a "P2P Web Bridge." 
 
 The core functionality is to bridge a local web application (running in the user's browser) with the Android Nearby Connections API, allowing for offline, local-first communication between devices running the app.
 
+For the original, detailed project requirements, see `docs/Android_Local_Network_Bridge_App.md`.
+
+## Project Structure
+
+The repository is organized as follows:
+
+-   `android/`: Contains the complete source code for the native Android application. This is the primary working directory for all Android-related tasks.
+-   `JULES.sh`: An automated script for setting up a complete Android development environment and building the project.
+-   `GEMINI.md`: This development context file.
+-   `README.md`: The main project README file.
+-   `Android_Local_Network_Bridge_App.md`: The detailed project requirements.
+-   `STORY.md`: A history of the project's development.
+
 ### Architecture
 
 The system is composed of three main parts:
@@ -30,18 +43,25 @@ The system is composed of three main parts:
 
 ## Building and Running
 
-### Building the App
+### Automated Build Environment Setup
 
-The project is a standard Android application built with Gradle.
+For a fully automated setup and build process, use the provided `JULES.sh` script. This script is designed for a Linux-based environment and will:
 
-*   **To build a debug APK from the command line:**
-    ```bash
-    ./gradlew assembleDebug
-    ```
-*   **To install the debug APK on a connected device:**
-    ```bash
-    ./gradlew installDebug
-    ```
+1.  Download the required Android command-line tools.
+2.  Set up the necessary Android SDK directory structure.
+3.  Set the `ANDROID_SDK_ROOT` and `PATH` environment variables.
+4.  Use `sdkmanager` to download the correct platform-tools, platform version, and build-tools version required by the project.
+5.  Automatically accept all SDK licenses.
+6.  Navigate into the `android/` directory and execute the Gradle build.
+
+To run the script, execute the following command from the project root:
+
+```bash
+bash JULES.sh
+```
+
+This is the recommended method for setting up a build environment from scratch.
+
 
 ### Running the App
 
@@ -69,3 +89,9 @@ The project follows modern Android and Kotlin development practices.
 *   **Logging:** A `LogFileWriter` provides persistent, on-device logging to a file, which is crucial for debugging real-world P2P interactions. Log messages are also broadcast to the UI.
 *   **Code Style:** The codebase favors modern Kotlin idioms, such as callable references (`::`) and a fluent API style where it enhances readability.
 *   **Immutability:** Data classes are used for modeling data (e.g., `Message`, API responses), promoting immutability.
+
+## Development History and Context
+
+This project has a documented history of its development journey, including challenges faced and architectural decisions made. This context is valuable for understanding the current state of the codebase and the rationale behind certain implementations.
+
+For a detailed chronicle of the development process and key learnings, please refer to `docs/STORY.md`.
