@@ -5,6 +5,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -12,13 +13,21 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
@@ -34,7 +43,7 @@ import info.benjaminhill.localmesh.mesh.ServiceState
 import info.benjaminhill.localmesh.ui.theme.LocalMeshTheme
 
 @Composable
-fun MainScreen(onAction: (P2PBridgeAction) -> Unit) {
+fun MainScreen(assetFolders: List<String>, onAction: (P2PBridgeAction) -> Unit) {
     val status by AppStateHolder.statusText.collectAsStateWithLifecycle()
     val logs by AppStateHolder.logs.collectAsStateWithLifecycle()
     val serverUrl by AppStateHolder.serverUrl.collectAsStateWithLifecycle()
@@ -48,6 +57,7 @@ fun MainScreen(onAction: (P2PBridgeAction) -> Unit) {
                 logs = logs,
                 currentServiceState = currentServiceState,
                 serverUrl = serverUrl,
+                assetFolders = assetFolders,
                 onAction = onAction,
                 onLogMessage = { AppStateHolder.addLog(it) }
             )
@@ -62,6 +72,7 @@ fun ControlPanel(
     logs: List<String>,
     currentServiceState: ServiceState,
     serverUrl: String?,
+    assetFolders: List<String>,
     onAction: (P2PBridgeAction) -> Unit = {},
     onLogMessage: (String) -> Unit = {}
 ) {
@@ -101,9 +112,50 @@ fun ControlPanel(
             onStopService = { onAction(P2PBridgeAction.Stop) }
         )
         Spacer(modifier = Modifier.height(16.dp))
+        if (currentServiceState is ServiceState.Running) {
+            FolderSelector(
+                folders = assetFolders,
+                onFolderSelected = { folderName ->
+                    onAction(P2PBridgeAction.ShareFolder(folderName))
+                }
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+        }
         ServerAddressDisplay(serverUrl = serverUrl)
         Spacer(modifier = Modifier.height(16.dp))
         LogView(logs = logs)
+    }
+}
+
+@Composable
+fun FolderSelector(
+    folders: List<String>,
+    onFolderSelected: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var expanded by remember { mutableStateOf(false) }
+    var selectedFolder by remember { mutableStateOf(folders.firstOrNull() ?: "Select Folder") }
+
+    Box(modifier = modifier) {
+        OutlinedButton(onClick = { expanded = true }) {
+            Text(selectedFolder)
+            Icon(Icons.Default.ArrowDropDown, contentDescription = "Dropdown")
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            folders.forEach { folder ->
+                DropdownMenuItem(
+                    text = { Text(folder) },
+                    onClick = {
+                        selectedFolder = folder
+                        expanded = false
+                        onFolderSelected(folder)
+                    }
+                )
+            }
+        }
     }
 }
 
@@ -182,8 +234,9 @@ fun ControlPanelPreview() {
         ControlPanel(
             status = "Inactive",
             logs = listOf("Log 1", "Log 2"),
-            currentServiceState = ServiceState.Idle,
-            serverUrl = "http://localhost:8099/test"
+            currentServiceState = ServiceState.Running,
+            serverUrl = "http://localhost:8099/test",
+            assetFolders = listOf("eye", "disco")
         )
     }
 }
