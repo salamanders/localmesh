@@ -3,6 +3,8 @@ package info.benjaminhill.localmesh
 import android.annotation.SuppressLint
 import android.content.pm.ApplicationInfo
 import android.os.Bundle
+import android.webkit.PermissionRequest
+import android.webkit.WebChromeClient
 import android.webkit.WebSettings
 import android.webkit.WebView
 import androidx.activity.ComponentActivity
@@ -34,6 +36,11 @@ class WebViewActivity : ComponentActivity() {
                             settings.javaScriptEnabled = true
                             settings.domStorageEnabled = true
                             settings.cacheMode = WebSettings.LOAD_NO_CACHE
+                            webChromeClient = object : WebChromeClient() {
+                                override fun onPermissionRequest(request: PermissionRequest) {
+                                    request.grant(request.resources)
+                                }
+                            }
                             loadUrl(url)
                         }
                     },
