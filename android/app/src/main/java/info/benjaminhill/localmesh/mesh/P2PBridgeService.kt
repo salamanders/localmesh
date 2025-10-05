@@ -150,6 +150,15 @@ class P2PBridgeService : Service() {
         when (intent?.action) {
             P2PBridgeAction.Start::class.java.name -> start()
             P2PBridgeAction.Stop::class.java.name -> stop()
+            P2PBridgeAction.ShareFolder::class.java.name -> {
+                intent.getStringExtra(EXTRA_FOLDER_NAME)?.let { folderName ->
+                    sendMessage("display $folderName")
+                    val newUrl = "http://localhost:${LocalHttpServer.PORT}/$folderName"
+                    AppStateHolder.serverUrl.value = newUrl
+                    sendLogMessage("Broadcasting display command for folder: $folderName and updated local URL to $newUrl")
+                } ?: sendLogMessage("ShareFolder action received with no folderName")
+            }
+
             else -> Log.w(TAG, "onStartCommand: Unknown action: ${intent?.action}")
         }
         return START_STICKY
@@ -316,6 +325,7 @@ class P2PBridgeService : Service() {
     }
 
     companion object {
+        const val EXTRA_FOLDER_NAME = "extra_folder_name"
         private const val CHANNEL_ID = "P2PBridgeServiceChannel"
         private const val TAG = "P2PBridgeService"
         private const val MAX_QUEUE_SIZE = 1_000
