@@ -4,6 +4,7 @@ import android.content.Intent
 import android.util.Log
 import info.benjaminhill.localmesh.mesh.BridgeService
 import info.benjaminhill.localmesh.mesh.HttpRequestWrapper
+import info.benjaminhill.localmesh.ui.AppStateHolder
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.request.request
@@ -23,7 +24,6 @@ import io.ktor.server.engine.embeddedServer
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.request.httpMethod
 import io.ktor.server.request.path
-import io.ktor.server.request.receive
 import io.ktor.server.request.receiveChannel
 import io.ktor.server.request.receiveMultipart
 import io.ktor.server.response.respond
@@ -35,6 +35,7 @@ import io.ktor.util.AttributeKey
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.readRemaining
 import kotlinx.io.readByteArray
+import io.ktor.server.request.receiveText
 
 import java.io.File
 import java.io.IOException
@@ -61,57 +62,76 @@ import io.ktor.server.cio.CIO as KtorCIO
  * - **[BridgeService]:** `LocalHttpServer` is the application's brain (API logic), while `BridgeService`
  *   is the heart, pumping data between the network and the brain.
  */
-// Attribute to cache the request body
-val RequestBodyAttribute = AttributeKey<String>("RequestBodyAttribute")
+
 
 class LocalHttpServer(
     private val service: BridgeService,
     private val logMessageCallback: (String) -> Unit
 ) {
 
+    // Define the possible broadcast strategies
+    private sealed class BroadcastStrategy {
+        data object LocalOnly : BroadcastStrategy() // Execute locally, do not broadcast.
+        data object BroadcastAndExecute : BroadcastStrategy() // Broadcast to peers AND execute locally.
+        data object BroadcastOnly : BroadcastStrategy() // Broadcast to peers, DO NOT execute locally.
+        //data object ReplyOnly : BroadcastStrategy() // Reply to sender with the result of the execution.
+    }
+
     private val httpClient = HttpClient(CIO)
 
     /**
-     * A Ktor plugin that intercepts incoming requests, broadcasts them to peers,
-     * and caches the request body to allow it to be read multiple times.
+     * A Ktor plugin that intercepts outgoing local requests and broadcasts them to peers.
+     * It decides whether a request should be executed locally, broadcast to peers, or both.
      */
     private val p2pBroadcastInterceptor =
         createApplicationPlugin(name = "P2PBroadcastInterceptor") {
-            onCall { call -> // Changed from on(ApplicationCallPipeline.Setup)
-                // Only intercept local requests that haven't been forwarded
-                if (call.request.queryParameters["sourceNodeId"] == null) {
-                    val body: String = if (call.request.httpMethod == HttpMethod.Post) {
-                        // For POST requests, read the body and cache it.
-                        // This is crucial because the body can only be read once from the original channel.
-                        // The `readByteArray()` function from `kotlinx.io` is required here.
-                        val bytes = call.receiveChannel()
-                            .readRemaining()
-                            .readByteArray()
-                        val bodyString = bytes.toString(Charsets.UTF_8)
-                        call.attributes.put(RequestBodyAttribute, bodyString)
-                        // Replace the original channel with a new one from the cached bytes
-                        // so that downstream handlers can still read the body.
-                        call.request.pipeline.execute(call, ByteReadChannel(bytes))
-                        bodyString
-                    } else {
-                        ""
-                    }
-
-                    // Create a wrapper for the HTTP request to be sent over the P2P network
-                    val wrapper = HttpRequestWrapper(
-                        method = call.request.httpMethod.value,
-                        path = call.request.path(),
-                        // Combine query params and body into a single string for simplicity
-                        params = call.request.queryParameters.formUrlEncode() + if (body.isNotEmpty()) "&$body" else "",
-                        sourceNodeId = service.getEndpointName()
-                    )
-
-                    // Broadcast the request to all peers
-                    service.broadcast(wrapper.toJson())
+            onCall { call ->
+                // --- Step 1: Determine the Strategy ---
+                val isFromPeer = call.request.queryParameters["sourceNodeId"] != null
+                if (isFromPeer) {
+                    // All requests from peers should execute locally and stop.
+                    return@onCall
                 }
+
+                val path = call.request.path()
+
+                val strategy = when (path) {
+                    // These paths are broadcast to peers and NOT executed locally on the originating device.
+                    "/chat", "/display" -> BroadcastStrategy.BroadcastOnly
+
+                    // All other paths (/status, /send-file, /assets) are local only.
+                    else -> BroadcastStrategy.LocalOnly
+                }
+
+                // --- Step 2: Execute the Strategy ---
+                if (strategy is BroadcastStrategy.LocalOnly) {
+                    return@onCall // Let the request proceed to the route handler.
+                }
+
+                // --- Logic for Broadcasting ---
+                // This code only runs for BroadcastOnly.
+
+                // For POST requests, we need to read the body to broadcast it.
+                // We DON'T need to cache it because we won't execute locally.
+                val body: String = if (call.request.httpMethod == HttpMethod.Post) {
+                    call.receiveText()
+                } else {
+                    ""
+                }
+
+                // Create and broadcast the wrapper.
+                val wrapper = HttpRequestWrapper(
+                    method = call.request.httpMethod.value,
+                    path = path,
+                    params = call.request.queryParameters.formUrlEncode() + if (body.isNotEmpty()) "&$body" else "",
+                    sourceNodeId = service.getEndpointName()
+                )
+                service.broadcast(wrapper.toJson())
+
+                // Stop the pipeline for this request by responding immediately.
+                call.respond(HttpStatusCode.OK, "Request broadcasted to peers.")
             }
         }
-
 
     private val server = embeddedServer(KtorCIO, port = PORT) {
         install(ContentNegotiation) {
@@ -121,9 +141,11 @@ class LocalHttpServer(
 
         routing {
             get("/status") {
+                // A simple report of the service's status and number of peers
                 call.respond(
                     mapOf(
-                        "status" to "RUNNING",
+                        "status" to HttpStatusCode.OK,
+                        "app_status" to AppStateHolder.currentState.value.toString(),
                         "id" to service.getEndpointName(),
                         "peerCount" to service.getConnectedPeerCount(),
                         "peerIds" to service.getConnectedPeerIds()
@@ -132,12 +154,12 @@ class LocalHttpServer(
             }
 
             post("/chat") {
-                val body = call.attributes.get(RequestBodyAttribute) ?: call.receive<String>()
+                val body = call.attributes[RequestBodyAttribute]
                 val message =
                     URLDecoder.decode(body, Charsets.UTF_8.name()).substringAfter("message=")
                 val source = call.request.queryParameters["sourceNodeId"] ?: "local"
                 logMessageCallback("Chat from $source: $message")
-                call.respond(mapOf("status" to "ok"))
+                call.respond(mapOf("status" to HttpStatusCode.OK))
             }
 
             get("/display") {
@@ -152,7 +174,12 @@ class LocalHttpServer(
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
                 service.startActivity(intent)
-                call.respond(mapOf("status" to "ok", "url" to "http://localhost:$PORT/$path"))
+                call.respond(
+                    mapOf(
+                        "status" to HttpStatusCode.OK,
+                        "url" to "http://localhost:$PORT/$path"
+                    )
+                )
             }
 
             // This endpoint is for receiving file *data* from the web UI
@@ -186,7 +213,8 @@ class LocalHttpServer(
                         responseSent = true
                         call.respond(
                             mapOf(
-                                "status" to "file sending initiated",
+                                "status" to HttpStatusCode.OK,
+                                "file_status" to "file sending initiated",
                                 "filename" to originalFileName
                             )
                         )
@@ -203,14 +231,13 @@ class LocalHttpServer(
 
             // This is a notification endpoint, not for data transfer
             post("/file-received") {
-                val params = call.attributes.get(RequestBodyAttribute) ?: call.receive<String>()
+                val params = call.attributes[RequestBodyAttribute]
                 val decodedParams = URLDecoder.decode(params, Charsets.UTF_8.name())
                 val filename = decodedParams.substringAfter("filename=").substringBefore("&")
                 val source = call.request.queryParameters["sourceNodeId"] ?: "local"
                 logMessageCallback("Notification: File '$filename' was successfully received from $source.")
-                call.respond(mapOf("status" to "ok"))
+                call.respond(mapOf("status" to HttpStatusCode.OK))
             }
-
 
             get("/{path...}") {
                 var path = call.parameters.getAll("path")?.joinToString("/") ?: return@get
@@ -226,7 +253,7 @@ class LocalHttpServer(
                             inputStream.copyTo(this)
                         }
                     }
-                } catch (e: IOException) {
+                } catch (_: IOException) {
                     call.respond(HttpStatusCode.NotFound, "File not found: $assetPath")
                 }
             }
@@ -285,5 +312,8 @@ class LocalHttpServer(
 
     companion object {
         const val PORT = 8099
+
+        // Attribute to cache the request body
+        val RequestBodyAttribute = AttributeKey<String>("RequestBodyAttribute")
     }
 }
