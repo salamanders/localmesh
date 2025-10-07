@@ -13,119 +13,89 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import com.google.android.gms.nearby.connection.Payload
 import info.benjaminhill.localmesh.LocalHttpServer
 import info.benjaminhill.localmesh.LogFileWriter
 import info.benjaminhill.localmesh.MainActivity
 import info.benjaminhill.localmesh.R
 import info.benjaminhill.localmesh.ui.AppStateHolder
-import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
-import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 
+/**
+ * The central Android [Service] for the LocalMesh application, acting as the "P2P Web Bridge" middleware.
+ *
+ * This foreground service orchestrates the entire peer-to-peer communication and local HTTP server
+ * functionality. It runs in the background, ensuring continuous operation even when the app's UI
+ * is not active.
+ *
+ * ## What it does
+ * - **Lifecycle Management:** Starts and stops the [NearbyConnectionsManager] and [LocalHttpServer].
+ * - **State Management:** Manages the overall state of the service using [ServiceState] and updates
+ *   the UI via [AppStateHolder].
+ * - **P2P Communication:** Receives incoming [com.google.android.gms.nearby.connection.Payload]s from [NearbyConnectionsManager], deserializes
+ *   them into [P2PMessage] objects, and dispatches them to its internal [CommandRouter]. It also provides
+ *   methods to send messages and files to other peers.
+ * - **Local HTTP Server Integration:** Provides the [LocalHttpServer] with the necessary context
+ *   and methods to interact with the P2P network (e.g., sending messages from the web UI).
+ * - **UI Interaction:** Responds to [P2PBridgeAction]s sent from the [info.benjaminhill.localmesh.MainActivity]
+ *   to control its behavior.
+ * - **System Integration:** Handles foreground service notifications, acquires wake locks to prevent
+ *   the OS from killing the service, and performs hardware/permission checks.
+ * - **Logging:** Uses [LogFileWriter] to persist logs and updates [AppStateHolder] for UI display.
+ *
+ * ## What it doesn't do
+ * - It does not directly implement the UI; that's handled by [info.benjaminhill.localmesh.MainActivity]
+ *   and its Compose UI.
+ * - It does not directly manage the Nearby Connections API; that's delegated to [NearbyConnectionsManager].
+ * - It does not directly serve web assets or handle HTTP requests; that's delegated to [LocalHttpServer].
+ * - It does not interpret the meaning of commands from other peers; that's delegated to its [CommandRouter].
+ *
+ * ## Comparison to other classes
+ * - **[NearbyConnectionsManager]:** The service *owns and uses* the manager to handle the low-level P2P
+ *   networking. The manager is a component of the service.
+ * - **[LocalHttpServer]:** The service *owns and uses* the HTTP server to expose functionality to the local
+ *   web browser. The server is a component of the service.
+ * - **[CommandRouter]:** The service *owns and uses* the router to dispatch incoming commands.
+ * - **[P2PBridgeAction]:** These are the *inputs* (commands) from the local UI that the service processes.
+ * - **[AppStateHolder]:** The service *writes* its state and logs to the `AppStateHolder`, which
+ *   the UI then *reads*.
+ * - **[ServiceState]:** This sealed class defines the possible states that `P2PBridgeService` can be in.
+ */
 class P2PBridgeService : Service() {
-
-    @Serializable
-    data class Message(
-        val from: String,
-        val sequence: Long,
-        val timestamp: Long,
-        val payload: String
-    )
 
     private lateinit var nearbyConnectionsManager: NearbyConnectionsManager
     private lateinit var localHttpServer: LocalHttpServer
+    private lateinit var commandRouter: CommandRouter
     private lateinit var endpointName: String
     private var wakeLock: PowerManager.WakeLock? = null
     private lateinit var logFileWriter: LogFileWriter
 
-    private val receivedMessages = ConcurrentLinkedQueue<Message>()
-    private val incomingFilePayloads = ConcurrentHashMap<Long, String>()
+    private val receivedP2PMessages = ConcurrentLinkedQueue<P2PMessage>()
+    internal val incomingFilePayloads = ConcurrentHashMap<Long, String>()
 
     override fun onCreate() {
         super.onCreate()
         Log.i(TAG, "onCreate() called")
         try {
+            endpointName =
+                (('A'..'Z') + ('a'..'z') + ('0'..'9')).shuffled().take(4).joinToString("")
             logFileWriter = LogFileWriter(applicationContext)
-            endpointName = UUID.randomUUID().toString().substring(0, 4)
-            nearbyConnectionsManager = NearbyConnectionsManager(this, endpointName, {
-                AppStateHolder.statusText.value = "Running - $it Peers"
-            }, ::sendLogMessage) { endpointId, payload ->
+            commandRouter = CommandRouter()
+            nearbyConnectionsManager = NearbyConnectionsManager(
+                context = this,
+                endpointName = endpointName,
+                peerCountUpdateCallback = {
+                    AppStateHolder.statusText.value = "Running - $it Peers"
+                },
+                logMessageCallback = ::sendLogMessage
+            ) { _, payload ->
                 try {
                     when (payload.type) {
-                        com.google.android.gms.nearby.connection.Payload.Type.BYTES -> {
-                            val message = Json.decodeFromString<Message>(payload.asBytes()!!.toString(Charsets.UTF_8))
-                            if (receivedMessages.size >= MAX_QUEUE_SIZE) {
-                                receivedMessages.poll()
-                            }
-                            receivedMessages.add(message)
-                            sendLogMessage("Received message: $message")
-
-                            if (message.payload.startsWith("display ")) {
-                                val urlPath = message.payload.substringAfter("display ").trim()
-                                if (urlPath.isNotBlank()) {
-                                    val safeUrlPath = if (urlPath.startsWith("/")) urlPath else "/$urlPath"
-                                    val fullUrl = "http://localhost:${LocalHttpServer.PORT}$safeUrlPath"
-                                    sendLogMessage("Received display command, opening $fullUrl")
-                                    val intent = Intent(applicationContext, info.benjaminhill.localmesh.WebViewActivity::class.java).apply {
-                                        putExtra(info.benjaminhill.localmesh.WebViewActivity.EXTRA_URL, fullUrl)
-                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                    }
-                                    startActivity(intent)
-                                }
-                            } else if (message.payload.startsWith("content ")) {
-                                val parts = message.payload.split(Regex("\\s+"), 3)
-                                if (parts.size == 3 && parts[0] == "content") {
-                                    val filename = parts[1].substringAfterLast('/').substringAfterLast('\\')
-                                    val fileContent = parts[2]
-                                    if (filename.isNotBlank()) {
-                                        try {
-                                            val cacheDir = File(applicationContext.cacheDir, "web_cache")
-                                            if (!cacheDir.exists()) {
-                                                cacheDir.mkdirs()
-                                            }
-                                            val file = File(cacheDir, filename)
-                                            file.writeText(fileContent)
-                                            sendLogMessage("Cached file updated: $filename")
-                                        } catch (e: Exception) {
-                                            sendLogMessage("Error caching file '$filename': ${e.message}")
-                                        }
-                                    }
-                                }
-                            } else if (message.payload.startsWith("file_info ")) {
-                                val parts = message.payload.split(Regex("\\s+"), 3)
-                                if (parts.size == 3 && parts[0] == "file_info") {
-                                    val filename = parts[1].substringAfterLast('/').substringAfterLast('\\')
-                                    val payloadId = parts[2].toLong()
-                                    incomingFilePayloads[payloadId] = filename
-                                    sendLogMessage("Received file info: $filename (payloadId: $payloadId)")
-                                }
-                            }
-                        }
-                        com.google.android.gms.nearby.connection.Payload.Type.STREAM -> {
-                            val filename = incomingFilePayloads.remove(payload.id)
-                            if (filename != null) {
-                                try {
-                                    val cacheDir = File(applicationContext.cacheDir, "web_cache")
-                                    if (!cacheDir.exists()) {
-                                        cacheDir.mkdirs()
-                                    }
-                                    val file = File(cacheDir, filename)
-                                    payload.asStream()?.asInputStream()?.use { inputStream ->
-                                        file.outputStream().use { outputStream ->
-                                            inputStream.copyTo(outputStream)
-                                        }
-                                    }
-                                    sendLogMessage("File received and cached: $filename")
-                                } catch (e: Exception) {
-                                    sendLogMessage("Error receiving file '$filename': ${e.message}")
-                                }
-                            } else {
-                                sendLogMessage("Received stream payload with unknown ID: ${payload.id}")
-                            }
-                        }
+                        Payload.Type.BYTES -> handleBytesPayload(payload)
+                        Payload.Type.STREAM -> handleStreamPayload(payload)
                         else -> sendLogMessage("Received unsupported payload type: ${payload.type}")
                     }
                 } catch (e: Exception) {
@@ -141,6 +111,41 @@ class P2PBridgeService : Service() {
         }
     }
 
+    private fun handleBytesPayload(payload: Payload) {
+        val p2PMessage = Json.decodeFromString<P2PMessage>(
+            payload.asBytes()!!.toString(Charsets.UTF_8)
+        )
+        if (receivedP2PMessages.size >= MAX_QUEUE_SIZE) {
+            receivedP2PMessages.poll()
+        }
+        receivedP2PMessages.add(p2PMessage)
+        sendLogMessage("Received: $p2PMessage")
+        commandRouter.route(p2PMessage, this)
+    }
+
+    private fun handleStreamPayload(payload: Payload) {
+        val filename = incomingFilePayloads.remove(payload.id)
+        if (filename != null) {
+            try {
+                val cacheDir = File(applicationContext.cacheDir, "web_cache")
+                if (!cacheDir.exists()) {
+                    cacheDir.mkdirs()
+                }
+                val file = File(cacheDir, filename)
+                payload.asStream()?.asInputStream()?.use { inputStream ->
+                    file.outputStream().use { outputStream ->
+                        inputStream.copyTo(outputStream)
+                    }
+                }
+                sendLogMessage("File received and cached: $filename")
+            } catch (e: Exception) {
+                sendLogMessage("Error receiving file '$filename': ${e.message}")
+            }
+        } else {
+            sendLogMessage("Received stream payload with unknown ID: ${payload.id}")
+        }
+    }
+
     override fun onBind(intent: Intent): IBinder? {
         return null
     }
@@ -150,13 +155,15 @@ class P2PBridgeService : Service() {
         when (intent?.action) {
             P2PBridgeAction.Start::class.java.name -> start()
             P2PBridgeAction.Stop::class.java.name -> stop()
-            P2PBridgeAction.ShareFolder::class.java.name -> {
-                intent.getStringExtra(EXTRA_FOLDER_NAME)?.let { folderName ->
-                    sendMessage("display $folderName")
-                    val newUrl = "http://localhost:${LocalHttpServer.PORT}/$folderName"
-                    AppStateHolder.serverUrl.value = newUrl
-                    sendLogMessage("Broadcasting display command for folder: $folderName and updated local URL to $newUrl")
-                } ?: sendLogMessage("ShareFolder action received with no folderName")
+            P2PBridgeAction.BroadcastCommand::class.java.name -> {
+                val command = intent.getStringExtra(EXTRA_COMMAND)
+                val payload = intent.getStringExtra(EXTRA_PAYLOAD)
+                if (command != null && payload != null) {
+                    sendMessage(command = command, payload = payload)
+                    sendLogMessage("Broadcasting command: '$command' with payload: '$payload'")
+                } else {
+                    sendLogMessage("BroadcastCommand action received with null command or payload")
+                }
             }
 
             else -> Log.w(TAG, "onStartCommand: Unknown action: ${intent?.action}")
@@ -164,38 +171,36 @@ class P2PBridgeService : Service() {
         return START_STICKY
     }
 
-    fun getReceivedMessages(): List<Message> {
-        val messages = receivedMessages.toList()
-        receivedMessages.clear()
+    fun getReceivedMessages(): List<P2PMessage> {
+        val messages = receivedP2PMessages.toList()
+        receivedP2PMessages.clear()
         return messages
     }
 
-    fun sendMessage(message: String) {
-        val messageObject = Message(
+    fun sendMessage(command: String, metadata: String = "", payload: String = "") {
+        val p2PMessageObject = P2PMessage(
             from = endpointName,
             sequence = System.currentTimeMillis(),
             timestamp = System.currentTimeMillis(),
-            payload = message
+            command = command,
+            metadata = metadata,
+            payload = payload
         )
-        val payload =
-            Json.encodeToString(Message.serializer(), messageObject).toByteArray(Charsets.UTF_8)
-        nearbyConnectionsManager.broadcastBytes(payload)
+        val payloadBytes =
+            Json.encodeToString(P2PMessage.serializer(), p2PMessageObject).toByteArray(Charsets.UTF_8)
+        nearbyConnectionsManager.broadcastBytes(payloadBytes)
     }
 
     fun sendFile(file: File) {
-        val payloadId = com.google.android.gms.nearby.connection.Payload.fromStream(file.inputStream()).id
-        val metadata = Json.encodeToString(
-            Message.serializer(),
-            Message(
-                from = endpointName,
-                sequence = System.currentTimeMillis(),
-                timestamp = System.currentTimeMillis(),
-                payload = "file_info ${file.name} $payloadId"
-            )
-        ).toByteArray(Charsets.UTF_8)
-
-        nearbyConnectionsManager.sendPayload(nearbyConnectionsManager.getConnectedPeerIds(), com.google.android.gms.nearby.connection.Payload.fromBytes(metadata))
-        nearbyConnectionsManager.sendPayload(nearbyConnectionsManager.getConnectedPeerIds(), com.google.android.gms.nearby.connection.Payload.fromStream(file.inputStream()))
+        val streamPayload = Payload.fromStream(file.inputStream())
+        sendMessage(
+            command = "file_stream",
+            metadata = "${file.name} ${streamPayload.id}"
+        )
+        nearbyConnectionsManager.sendPayload(
+            nearbyConnectionsManager.getConnectedPeerIds(),
+            streamPayload
+        )
     }
 
     fun getConnectedPeerCount(): Int = nearbyConnectionsManager.getConnectedPeerCount()
@@ -318,14 +323,15 @@ class P2PBridgeService : Service() {
         getSystemService(NotificationManager::class.java).createNotificationChannel(serviceChannel)
     }
 
-    private fun sendLogMessage(message: String) {
+    fun sendLogMessage(message: String) {
         Log.d(TAG, message)
         logFileWriter.writeLog(message)
         AppStateHolder.addLog(message)
     }
 
     companion object {
-        const val EXTRA_FOLDER_NAME = "extra_folder_name"
+        const val EXTRA_COMMAND = "extra_command"
+        const val EXTRA_PAYLOAD = "extra_payload"
         private const val CHANNEL_ID = "P2PBridgeServiceChannel"
         private const val TAG = "P2PBridgeService"
         private const val MAX_QUEUE_SIZE = 1_000
