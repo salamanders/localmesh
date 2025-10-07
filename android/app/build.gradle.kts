@@ -89,4 +89,5 @@ dependencies {
     testImplementation(libs.core.ktx)
     testImplementation(libs.mockito.kotlin)
     testImplementation(libs.androidx.junit)
+    testImplementation(libs.ktor.server.test.host)
 }

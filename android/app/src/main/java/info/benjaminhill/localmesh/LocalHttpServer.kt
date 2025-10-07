@@ -75,7 +75,7 @@ class LocalHttpServer(
      * A Ktor plugin that intercepts incoming requests, broadcasts them to peers,
      * and caches the request body to allow it to be read multiple times.
      */
-    private val p2pBroadcastInterceptor =
+    internal val p2pBroadcastInterceptor =
         createApplicationPlugin(name = "P2PBroadcastInterceptor") {
             onCall { call -> // Changed from on(ApplicationCallPipeline.Setup)
                 // Only intercept local requests that haven't been forwarded
