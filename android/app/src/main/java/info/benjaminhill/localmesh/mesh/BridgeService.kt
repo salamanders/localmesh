@@ -135,6 +135,27 @@ class BridgeService : Service() {
         when (intent?.action) {
             BridgeAction.Start::class.java.name -> start()
             BridgeAction.Stop::class.java.name -> stop()
+            BridgeAction.BroadcastCommand::class.java.name -> {
+                if (AppStateHolder.currentState.value !is BridgeState.Running) {
+                    sendLogMessage("Cannot broadcast command while service is not running.")
+                    return START_STICKY
+                }
+                val command = intent.getStringExtra(EXTRA_COMMAND)
+                val payload = intent.getStringExtra(EXTRA_PAYLOAD)
+                if (command != null && payload != null) {
+                    val wrapper = HttpRequestWrapper(
+                        method = "GET", // Or derive from command if needed
+                        path = "/$command",
+                        params = "path=$payload",
+                        sourceNodeId = endpointName
+                    )
+                    broadcast(wrapper.toJson())
+                    sendLogMessage("Broadcasted command: $command with payload: $payload")
+                } else {
+                    sendLogMessage("Broadcast command received with null command or payload.")
+                }
+            }
+
             else -> Log.w(TAG, "onStartCommand: Unknown action: ${intent?.action}")
         }
         return START_STICKY
