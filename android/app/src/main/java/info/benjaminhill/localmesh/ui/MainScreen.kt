@@ -38,12 +38,26 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import info.benjaminhill.localmesh.mesh.P2PBridgeAction
-import info.benjaminhill.localmesh.mesh.ServiceState
+import info.benjaminhill.localmesh.mesh.BridgeAction
+import info.benjaminhill.localmesh.mesh.BridgeState
 import info.benjaminhill.localmesh.ui.theme.LocalMeshTheme
 
+/**
+ * The main user interface of the application, built with Jetpack Compose.
+ *
+ * ## What it does
+ * - Displays the current status of the service.
+ * - Provides buttons to start and stop the `BridgeService`.
+ * - Shows the URL of the local web server when it's running.
+ * - Displays a running log of events from the service.
+ * - Handles requesting necessary permissions from the user before starting the service.
+ *
+ * ## What it doesn't do
+ * - It does not contain any business logic. It observes state from `AppStateHolder` and delegates
+ *   all user actions to the `onAction` callback, which sends intents to the `BridgeService`.
+ */
 @Composable
-fun MainScreen(assetFolders: List<String>, onAction: (P2PBridgeAction) -> Unit) {
+fun MainScreen(assetFolders: List<String>, onAction: (BridgeAction) -> Unit) {
     val status by AppStateHolder.statusText.collectAsStateWithLifecycle()
     val logs by AppStateHolder.logs.collectAsStateWithLifecycle()
     val serverUrl by AppStateHolder.serverUrl.collectAsStateWithLifecycle()
@@ -55,7 +69,7 @@ fun MainScreen(assetFolders: List<String>, onAction: (P2PBridgeAction) -> Unit) 
                 modifier = Modifier.padding(innerPadding),
                 status = status,
                 logs = logs,
-                currentServiceState = currentServiceState,
+                currentBridgeState = currentServiceState,
                 serverUrl = serverUrl,
                 assetFolders = assetFolders,
                 onAction = onAction,
@@ -70,10 +84,10 @@ fun ControlPanel(
     modifier: Modifier = Modifier,
     status: String,
     logs: List<String>,
-    currentServiceState: ServiceState,
+    currentBridgeState: BridgeState,
     serverUrl: String?,
     assetFolders: List<String>,
-    onAction: (P2PBridgeAction) -> Unit = {},
+    onAction: (BridgeAction) -> Unit = {},
     onLogMessage: (String) -> Unit = {}
 ) {
     val requestPermissionLauncher = rememberLauncherForActivityResult(
@@ -81,7 +95,7 @@ fun ControlPanel(
     ) { permissions ->
         if (permissions.all { it.value }) {
             onLogMessage("Permissions granted, starting service...")
-            onAction(P2PBridgeAction.Start)
+            onAction(BridgeAction.Start)
         } else {
             onLogMessage("Permissions not granted")
         }
@@ -95,8 +109,8 @@ fun ControlPanel(
         StatusDisplay(status = status)
         Spacer(modifier = Modifier.height(16.dp))
         ServiceButtons(
-            isServiceRunning = currentServiceState is ServiceState.Running,
-            isServiceStarting = currentServiceState is ServiceState.Starting,
+            isServiceRunning = currentBridgeState is BridgeState.Running,
+            isServiceStarting = currentBridgeState is BridgeState.Starting,
             onRequestStart = {
                 requestPermissionLauncher.launch(
                     arrayOf(
@@ -109,14 +123,14 @@ fun ControlPanel(
                     )
                 )
             },
-            onStopService = { onAction(P2PBridgeAction.Stop) }
+            onStopService = { onAction(BridgeAction.Stop) }
         )
         Spacer(modifier = Modifier.height(16.dp))
-        if (currentServiceState is ServiceState.Running) {
+        if (currentBridgeState is BridgeState.Running) {
             FolderSelector(
                 folders = assetFolders,
                 onFolderSelected = { folderName ->
-                    onAction(P2PBridgeAction.ShareFolder(folderName))
+                    onAction(BridgeAction.BroadcastCommand("display", folderName))
                 }
             )
             Spacer(modifier = Modifier.height(16.dp))
@@ -234,7 +248,7 @@ fun ControlPanelPreview() {
         ControlPanel(
             status = "Inactive",
             logs = listOf("Log 1", "Log 2"),
-            currentServiceState = ServiceState.Running,
+            currentBridgeState = BridgeState.Running,
             serverUrl = "http://localhost:8099/test",
             assetFolders = listOf("eye", "disco")
         )

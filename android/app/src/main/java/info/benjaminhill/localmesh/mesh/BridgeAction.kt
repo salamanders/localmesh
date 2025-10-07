@@ -1,41 +1,39 @@
 package info.benjaminhill.localmesh.mesh
 
 /**
- * Represents the set of well-defined, type-safe actions the UI can send to the [P2PBridgeService].
+ * Represents the set of well-defined, type-safe actions the UI can send to the [BridgeService].
  *
  * These actions are sent from the [info.benjaminhill.localmesh.MainActivity] to the service via Android Intents.
  *
  * ## What it does
  * Defines the contract for UI-to-Service communication within the app. It's
- * used for controlling the lifecycle of the service (e.g., starting and stopping) and triggering
- * high-level, user-initiated operations like sharing a folder.
+ * used for controlling the lifecycle of the service (e.g., starting and stopping).
  *
  * ## What it doesn't do
  * This is NOT for commands sent between peers on the network.
- * Inter-peer communication is handled by the [CommandRouter] and its [CommandRouter.AbstractCommand]
- * implementations, which are triggered by incoming payloads from other devices.
+ * Inter-peer communication is handled by wrapping local HTTP requests into an [HttpRequestWrapper]
+ * which is then broadcast to peers.
  *
  * ## Comparison to other classes
- * - **[CommandRouter.AbstractCommand]:** `P2PBridgeAction` is for *intra-device* communication (UI to
- *   Service), while `AbstractCommand` is for *inter-device* communication (peer to peer).
- * - **[ServiceState]:** `P2PBridgeAction` represents *requests* to change the service's state,
- *   while [ServiceState] represents the *actual current state* of the service.
+ * - **[HttpRequestWrapper]:** `BridgeAction` is for *intra-device* communication (UI to
+ *   Service), while `HttpRequestWrapper` is for *inter-device* communication (peer to peer).
+ * - **[BridgeState]:** `BridgeAction` represents *requests* to change the service's state,
+ *   while [BridgeState] represents the *actual current state* of the service.
  */
-sealed class P2PBridgeAction {
+sealed class BridgeAction {
     /**
      * Starts the P2P bridge service.
      */
-    object Start : P2PBridgeAction()
+    object Start : BridgeAction()
 
     /**
      * Stops the P2P bridge service.
      */
-    object Stop : P2PBridgeAction()
+    object Stop : BridgeAction()
 
     /**
      * Tells the service to broadcast a command to all peers.
      * This is for sending commands from the local UI to remote devices.
-     * It is NOT for handling commands received from other peers; that is done by [CommandRouter].
      */
-    data class BroadcastCommand(val command: String, val payload: String) : P2PBridgeAction()
+    data class BroadcastCommand(val command: String, val payload: String) : BridgeAction()
 }

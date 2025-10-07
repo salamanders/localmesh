@@ -50,14 +50,7 @@ const eyeTextures = [
 
 const init = () => {
 
-    if(document.documentElement.requestFullscreen) {
-        console.log('Supports fullscreen request.');
-        document.documentElement.addEventListener('click', () => {
-            document.documentElement.requestFullscreen();
-        }, false);
-    } else {
-        window.scrollTo(0,1);
-    }
+
 
     renderer = new THREE.WebGLRenderer();
     renderer.setSize(window.innerWidth, window.innerHeight);

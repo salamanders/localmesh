@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta content="width=device-width, initial-scale=1.0, user-scalable=no" name="viewport">
     <title>Motion Reactive Color</title>
     <style>
         /* Basic styles for a full-screen experience */
@@ -53,117 +53,118 @@
     </style>
 </head>
 <body>
-    <!-- This overlay prompts the user for permission to access motion sensors. -->
-    <div id="permission-overlay">
-        <h1>Motion Color</h1>
-        <p>Tap anywhere to begin. This experience uses your device's motion sensors to change the screen color.</p>
-    </div>
+<!-- This overlay prompts the user for permission to access motion sensors. -->
+<div id="permission-overlay">
+    <h1>Motion Color</h1>
+    <p>Tap anywhere to begin. This experience uses your device's motion sensors to change the screen
+        color.</p>
+</div>
 
-    <script>
-        const body = document.body;
-        const permissionOverlay = document.getElementById('permission-overlay');
+<script>
+    const body = document.body;
+    const permissionOverlay = document.getElementById('permission-overlay');
 
-        // Function to start listening for device motion events
-        function startMotionDetection() {
-            // Hide the permission overlay once started
-            permissionOverlay.style.display = 'none';
+    // Function to start listening for device motion events
+    function startMotionDetection() {
+        // Hide the permission overlay once started
+        permissionOverlay.style.display = 'none';
 
-            // --- Dynamic Range Calculation Setup ---
-            const WINDOW_SIZE = 150; // Store the last 150 samples (e.g., 2-3 seconds of data)
-            let magnitudeHistory = [];
-            // Initialize min/max with sensible defaults around gravity (9.8 m/s^2)
-            let minRecentMagnitude = 9.0;
-            let maxRecentMagnitude = 15.0;
+        // --- Dynamic Range Calculation Setup ---
+        const WINDOW_SIZE = 150; // Store the last 150 samples (e.g., 2-3 seconds of data)
+        let magnitudeHistory = [];
+        // Initialize min/max with sensible defaults around gravity (9.8 m/s^2)
+        let minRecentMagnitude = 9.0;
+        let maxRecentMagnitude = 15.0;
 
-            window.addEventListener('devicemotion', (event) => {
-                // Fallback for devices that don't provide acceleration data
-                if (!event.accelerationIncludingGravity) {
-                    return;
-                }
+        window.addEventListener('devicemotion', (event) => {
+            // Fallback for devices that don't provide acceleration data
+            if (!event.accelerationIncludingGravity) {
+                return;
+            }
 
-                const { x, y, z } = event.accelerationIncludingGravity;
+            const { x, y, z } = event.accelerationIncludingGravity;
 
-                // --- HUE CALCULATION ---
-                // For a device in portrait mode, we use atan2 on the z and x axes.
-                // This maps the direction of the gravity vector as the user spins around.
-                // The result is converted from radians to degrees (0-360) for the HSL color model.
-                const hue = (Math.atan2(z, x) * (180 / Math.PI)) + 180) + 180;
+            // --- HUE CALCULATION ---
+            // For a device in portrait mode, we use atan2 on the z and x axes.
+            // This maps the direction of the gravity vector as the user spins around.
+            // The result is converted from radians to degrees (0-360) for the HSL color model.
+            const hue = (Math.atan2(z, x) * (180 / Math.PI)) + 180) + 180;
 
-                // --- BRIGHTNESS (LIGHTNESS) CALCULATION WITH DYNAMIC RANGE ---
-                // We calculate the magnitude of the acceleration vector to determine the total force.
-                const magnitude = Math.sqrt(x * x + y * y + z * z);
-                
-                // 1. Update the history of recent magnitudes.
-                magnitudeHistory.push(magnitude);
-                if (magnitudeHistory.length > WINDOW_SIZE) {
-                    magnitudeHistory.shift(); // Remove the oldest entry if the window is full.
-                }
+            // --- BRIGHTNESS (LIGHTNESS) CALCULATION WITH DYNAMIC RANGE ---
+            // We calculate the magnitude of the acceleration vector to determine the total force.
+            const magnitude = Math.sqrt(x * x + y * y + z * z);
 
-                // 2. Find the min and max magnitudes in the recent history to define the dynamic range.
-                if (magnitudeHistory.length > 1) {
-                    minRecentMagnitude = Math.min(...magnitudeHistory);
-                    maxRecentMagnitude = Math.max(...magnitudeHistory);
-                }
+            // 1. Update the history of recent magnitudes.
+            magnitudeHistory.push(magnitude);
+            if (magnitudeHistory.length > WINDOW_SIZE) {
+                magnitudeHistory.shift(); // Remove the oldest entry if the window is full.
+            }
 
-                // 3. Map the current magnitude to a lightness value (0-100%).
-                // The range is dynamically set from the quietest recent movement to the strongest.
-                let lightness = 0;
-                const range = maxRecentMagnitude - minRecentMagnitude;
+            // 2. Find the min and max magnitudes in the recent history to define the dynamic range.
+            if (magnitudeHistory.length > 1) {
+                minRecentMagnitude = Math.min(...magnitudeHistory);
+                maxRecentMagnitude = Math.max(...magnitudeHistory);
+            }
 
-                // We check for a meaningful range to avoid division by zero.
-                if (range > 1) { 
-                    lightness = ((magnitude - minRecentMagnitude) / range) * 100;
-                } else if (magnitude >= maxRecentMagnitude) {
-                    // If range is tiny, just go to full brightness if we are at the max.
-                    lightness = 100;
-                }
-                
-                // Clamp the lightness value between 0 and 100 to ensure it's a valid HSL value.
-                lightness = Math.max(0, Math.min(100, lightness));
+            // 3. Map the current magnitude to a lightness value (0-100%).
+            // The range is dynamically set from the quietest recent movement to the strongest.
+            let lightness = 0;
+            const range = maxRecentMagnitude - minRecentMagnitude;
 
-                // Apply the calculated HSL color to the body's background
-                // Saturation is kept at 100% for vibrant colors.
-                body.style.backgroundColor = `hsl(${hue}, 100%, ${lightness}%)`;
+            // We check for a meaningful range to avoid division by zero.
+            if (range > 1) {
+                lightness = ((magnitude - minRecentMagnitude) / range) * 100;
+            } else if (magnitude >= maxRecentMagnitude) {
+                // If range is tiny, just go to full brightness if we are at the max.
+                lightness = 100;
+            }
+
+            // Clamp the lightness value between 0 and 100 to ensure it's a valid HSL value.
+            lightness = Math.max(0, Math.min(100, lightness));
+
+            // Apply the calculated HSL color to the body's background
+            // Saturation is kept at 100% for vibrant colors.
+            body.style.backgroundColor = `hsl(${hue}, 100%, ${lightness}%)`;
+        });
+    }
+
+    // --- PERMISSION HANDLING & INITIALIZATION ---
+    function initialize(isUserGesture) {
+        if (isUserGesture && document.documentElement.requestFullscreen) {
+            document.documentElement.requestFullscreen().catch(err => {
+                console.warn(`Could not enter fullscreen mode: ${err.message}`);
             });
         }
-        
-        // --- PERMISSION HANDLING & INITIALIZATION ---
-        function initialize(isUserGesture) {
-            if (isUserGesture && document.documentElement.requestFullscreen) {
-                document.documentElement.requestFullscreen().catch(err => {
-                    console.warn(`Could not enter fullscreen mode: ${err.message}`);
-                });
-            }
-            
-            // Check if the specific permission API exists (primarily for iOS Safari)
-            if (typeof DeviceMotionEvent.requestPermission === 'function') {
-                DeviceMotionEvent.requestPermission()
-                    .then(permissionState => {
-                        if (permissionState === 'granted') {
-                            startMotionDetection();
-                        } else {
-                            // Inform the user if permission is denied.
-                            permissionOverlay.querySelector('p').textContent = 'Permission was not granted. Please refresh and try again.';
-                        }
-                    })
-                    .catch(console.error);
-            } else {
-                // For other browsers (like Android Chrome) that don't require this specific API call
-                startMotionDetection();
-            }
+
+        // Check if the specific permission API exists (primarily for iOS Safari)
+        if (typeof DeviceMotionEvent.requestPermission === 'function') {
+            DeviceMotionEvent.requestPermission()
+                .then(permissionState => {
+                    if (permissionState === 'granted') {
+                        startMotionDetection();
+                    } else {
+                        // Inform the user if permission is denied.
+                        permissionOverlay.querySelector('p').textContent = 'Permission was not granted. Please refresh and try again.';
+                    }
+                })
+                .catch(console.error);
+        } else {
+            // For other browsers (like Android Chrome) that don't require this specific API call
+            startMotionDetection();
         }
+    }
 
-        // Set up the click listener for the overlay, which is the required path for iOS.
-        permissionOverlay.addEventListener('click', () => initialize(true), { once: true });
+    // Set up the click listener for the overlay, which is the required path for iOS.
+    permissionOverlay.addEventListener('click', () => initialize(true), { once: true });
 
-        // For non-iOS browsers, attempt to start immediately without a click.
-        // The `typeof DeviceMotionEvent.requestPermission` check inside `initialize`
-        // will handle the branching logic.
-        if (typeof DeviceMotionEvent.requestPermission !== 'function') {
-            initialize(false);
-        }
+    // For non-iOS browsers, attempt to start immediately without a click.
+    // The `typeof DeviceMotionEvent.requestPermission` check inside `initialize`
+    // will handle the branching logic.
+    if (typeof DeviceMotionEvent.requestPermission !== 'function') {
+        initialize(false);
+    }
 
-    </script>
+</script>
 </body>
 </html>
 

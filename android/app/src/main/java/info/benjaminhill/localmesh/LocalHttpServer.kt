@@ -1,196 +1,233 @@
 package info.benjaminhill.localmesh
 
-import info.benjaminhill.localmesh.mesh.P2PBridgeService
+import android.content.Intent
+import android.util.Log
+import info.benjaminhill.localmesh.mesh.BridgeService
+import info.benjaminhill.localmesh.mesh.HttpRequestWrapper
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.cio.CIO
+import io.ktor.client.request.request
+import io.ktor.client.request.setBody
 import io.ktor.http.ContentType
+import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.PartData
+import io.ktor.http.content.TextContent
 import io.ktor.http.content.forEachPart
-import io.ktor.http.content.streamProvider
+import io.ktor.http.formUrlEncode
 import io.ktor.http.fromFileExtension
 import io.ktor.serialization.kotlinx.json.json
+import io.ktor.server.application.createApplicationPlugin
 import io.ktor.server.application.install
-import io.ktor.server.cio.CIO
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.server.request.httpMethod
+import io.ktor.server.request.path
 import io.ktor.server.request.receive
+import io.ktor.server.request.receiveChannel
 import io.ktor.server.request.receiveMultipart
-import io.ktor.server.request.receiveParameters
 import io.ktor.server.response.respond
-import io.ktor.server.response.respondRedirect
 import io.ktor.server.response.respondOutputStream
-import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
-import kotlinx.serialization.Serializable
+import io.ktor.util.AttributeKey
+import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.readRemaining
+import kotlinx.io.readByteArray
+
+import java.io.File
 import java.io.IOException
 import java.net.BindException
-import java.text.DateFormat
-import java.util.Date
+import java.net.URLDecoder
+import io.ktor.server.cio.CIO as KtorCIO
+
+/**
+ * A Ktor-based web server that runs on the Android device, serving the web UI and handling API requests.
+ * It is the single source of truth for the application's API.
+ *
+ * ## What it does
+ * - Serves the static web assets (HTML, CSS, JS) for the frontend.
+ * - Defines all API endpoints (e.g., `/status`, `/chat`, `/send-file`).
+ * - Intercepts outgoing local requests and broadcasts them to peers as `HttpRequestWrapper` objects.
+ * - Receives `HttpRequestWrapper` objects from peers (via `BridgeService`) and dispatches them as
+ *   synthetic local requests to its own endpoints.
+ *
+ * ## What it doesn't do
+ * - It does not directly handle P2P communication; that is done by `NearbyConnectionsManager`.
+ * - It does not manage the service lifecycle; that is done by `BridgeService`.
+ *
+ * ## Comparison to other classes
+ * - **[BridgeService]:** `LocalHttpServer` is the application's brain (API logic), while `BridgeService`
+ *   is the heart, pumping data between the network and the brain.
+ */
+// Attribute to cache the request body
+val RequestBodyAttribute = AttributeKey<String>("RequestBodyAttribute")
 
 class LocalHttpServer(
-    private val service: P2PBridgeService,
+    private val service: BridgeService,
     private val logMessageCallback: (String) -> Unit
 ) {
 
-    @Serializable
-    data class SendMessageRequest(val message: String)
+    private val httpClient = HttpClient(CIO)
 
-    @Serializable
-    data class StatusResponse(
-        val status: String,
-        val id: String,
-        val peerCount: Int,
-        val peerIds: List<String>
-    )
+    /**
+     * A Ktor plugin that intercepts incoming requests, broadcasts them to peers,
+     * and caches the request body to allow it to be read multiple times.
+     */
+    private val p2pBroadcastInterceptor =
+        createApplicationPlugin(name = "P2PBroadcastInterceptor") {
+            onCall { call -> // Changed from on(ApplicationCallPipeline.Setup)
+                // Only intercept local requests that haven't been forwarded
+                if (call.request.queryParameters["sourceNodeId"] == null) {
+                    val body: String = if (call.request.httpMethod == HttpMethod.Post) {
+                        // For POST requests, read the body and cache it.
+                        // This is crucial because the body can only be read once from the original channel.
+                        // The `readByteArray()` function from `kotlinx.io` is required here.
+                        val bytes = call.receiveChannel()
+                            .readRemaining()
+                            .readByteArray()
+                        val bodyString = bytes.toString(Charsets.UTF_8)
+                        call.attributes.put(RequestBodyAttribute, bodyString)
+                        // Replace the original channel with a new one from the cached bytes
+                        // so that downstream handlers can still read the body.
+                        call.request.pipeline.execute(call, ByteReadChannel(bytes))
+                        bodyString
+                    } else {
+                        ""
+                    }
+
+                    // Create a wrapper for the HTTP request to be sent over the P2P network
+                    val wrapper = HttpRequestWrapper(
+                        method = call.request.httpMethod.value,
+                        path = call.request.path(),
+                        // Combine query params and body into a single string for simplicity
+                        params = call.request.queryParameters.formUrlEncode() + if (body.isNotEmpty()) "&$body" else "",
+                        sourceNodeId = service.getEndpointName()
+                    )
+
+                    // Broadcast the request to all peers
+                    service.broadcast(wrapper.toJson())
+                }
+            }
+        }
 
 
-    private val server = embeddedServer(CIO, port = PORT) {
+    private val server = embeddedServer(KtorCIO, port = PORT) {
         install(ContentNegotiation) {
             json()
         }
+        install(p2pBroadcastInterceptor)
+
         routing {
             get("/status") {
                 call.respond(
-                    StatusResponse(
-                        status = "RUNNING",
-                        id = service.getEndpointName(),
-                        peerCount = service.getConnectedPeerCount(),
-                        peerIds = service.getConnectedPeerIds()
+                    mapOf(
+                        "status" to "RUNNING",
+                        "id" to service.getEndpointName(),
+                        "peerCount" to service.getConnectedPeerCount(),
+                        "peerIds" to service.getConnectedPeerIds()
                     )
                 )
             }
-            post("/send") {
-                try {
-                    val request = call.receive<SendMessageRequest>()
-                    service.sendMessage(request.message)
-                    call.respond(mapOf("status" to "accepted"))
-                } catch (e: Exception) {
-                    logMessageCallback("Failed to parse send request: ${e.message}")
+
+            post("/chat") {
+                val body = call.attributes.get(RequestBodyAttribute) ?: call.receive<String>()
+                val message =
+                    URLDecoder.decode(body, Charsets.UTF_8.name()).substringAfter("message=")
+                val source = call.request.queryParameters["sourceNodeId"] ?: "local"
+                logMessageCallback("Chat from $source: $message")
+                call.respond(mapOf("status" to "ok"))
+            }
+
+            get("/display") {
+                val path = call.parameters["path"]
+                if (path == null) {
+                    call.respond(HttpStatusCode.BadRequest, "Missing path parameter")
+                    return@get
+                }
+                val intent = Intent(service.applicationContext, WebViewActivity::class.java).apply {
+                    // Correctly form the URL
+                    putExtra(WebViewActivity.EXTRA_URL, "http://localhost:$PORT/$path")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                service.startActivity(intent)
+                call.respond(mapOf("status" to "ok", "url" to "http://localhost:$PORT/$path"))
+            }
+
+            // This endpoint is for receiving file *data* from the web UI
+            post("/send-file") {
+                val sourceNodeId = call.request.queryParameters["sourceNodeId"]
+                if (sourceNodeId != null) {
+                    // This call came from a peer, so the file is already being handled by the STREAM payload.
+                    // We just log it.
+                    val filename = call.request.queryParameters["filename"] ?: "unknown"
+                    logMessageCallback("Received file request for '$filename' from peer '$sourceNodeId'. Awaiting stream.")
+                    call.respond(HttpStatusCode.OK, "File request acknowledged from peer.")
+                    return@post
+                }
+
+                // This is a new file upload from the local web UI
+                val multipart = call.receiveMultipart()
+                var responseSent = false
+                multipart.forEachPart { part ->
+                    if (part is PartData.FileItem) {
+                        val originalFileName = part.originalFileName ?: "unknown.bin"
+                        // The `readByteArray()` function from `kotlinx.io` is required here.
+                        val fileBytes = part.provider().readRemaining().readByteArray()
+                        val tempFile = File(
+                            service.cacheDir,
+                            "upload_temp_${System.currentTimeMillis()}_$originalFileName"
+                        ).apply {
+                            writeBytes(fileBytes)
+                        }
+                        // Use the BridgeService to send the file via a STREAM payload
+                        service.sendFile(tempFile)
+                        responseSent = true
+                        call.respond(
+                            mapOf(
+                                "status" to "file sending initiated",
+                                "filename" to originalFileName
+                            )
+                        )
+                    }
+                    part.dispose()
+                }
+                if (!responseSent) {
                     call.respond(
                         HttpStatusCode.BadRequest,
-                        mapOf("error" to "Invalid request format")
+                        "No file part found in multipart request."
                     )
                 }
             }
-            get("/messages") {
-                call.respond(service.getReceivedMessages())
-            }
-            get("/test") {
-                val statusResponse = StatusResponse(
-                    status = "RUNNING",
-                    id = service.getEndpointName(),
-                    peerCount = service.getConnectedPeerCount(),
-                    peerIds = service.getConnectedPeerIds()
-                )
-                val statusHtml = """
-                    <strong>ID:</strong> ${statusResponse.id}<br>
-                    <strong>Peers:</strong> ${statusResponse.peerCount} (${
-                    statusResponse.peerIds.joinToString(
-                        ", "
-                    )
-                })
-                """.trimIndent()
 
-                val messages = service.getReceivedMessages()
-                val messagesHtml = if (messages.isEmpty()) {
-                    "<p>No messages received yet.</p>"
-                } else {
-                    val timeFormatter = DateFormat.getTimeInstance(DateFormat.MEDIUM)
-                    messages.joinToString("\n") { msg ->
-                        """
-                        <div class="message">
-                            <strong>From:</strong> ${msg.from} <small>(${
-                            timeFormatter.format(
-                                Date(msg.timestamp)
-                            )
-                        })</small><br>
-                            ${msg.payload}
-                        </div>
-                        """.trimIndent()
-                    }
-                }
-                call.respondText(getTestPageHtml(statusHtml, messagesHtml), ContentType.Text.Html)
-            }
-            post("/send-message-from-test") {
-                val parameters = call.receiveParameters()
-                val message = parameters["messageInput"]
-                if (message != null) {
-                    service.sendMessage(message)
-                }
-                call.respondRedirect("/test")
+            // This is a notification endpoint, not for data transfer
+            post("/file-received") {
+                val params = call.attributes.get(RequestBodyAttribute) ?: call.receive<String>()
+                val decodedParams = URLDecoder.decode(params, Charsets.UTF_8.name())
+                val filename = decodedParams.substringAfter("filename=").substringBefore("&")
+                val source = call.request.queryParameters["sourceNodeId"] ?: "local"
+                logMessageCallback("Notification: File '$filename' was successfully received from $source.")
+                call.respond(mapOf("status" to "ok"))
             }
 
-            post("/send-file") {
-                var tempFile: java.io.File? = null
-                try {
-                    val multipart = call.receiveMultipart()
-                    multipart.forEachPart { part ->
-                        if (part is PartData.FileItem) {
-                            val originalFileName = part.originalFileName ?: "unknown.bin"
-                            val fileBytes = part.streamProvider().readBytes()
-                            tempFile = java.io.File(
-                                service.cacheDir,
-                                "upload_temp_${System.currentTimeMillis()}_$originalFileName"
-                            ).apply {
-                                writeBytes(fileBytes)
-                            }
-                            service.sendFile(tempFile!!)
-                        }
-                        part.dispose()
-                    }
-                    call.respondRedirect("/test", permanent = false)
-                } catch (e: Exception) {
-                    logMessageCallback("Error handling file upload: ${e.message}")
-                    call.respond(HttpStatusCode.InternalServerError, "Error processing file")
-                } finally {
-                    tempFile?.delete()
-                }
-            }
 
             get("/{path...}") {
                 var path = call.parameters.getAll("path")?.joinToString("/") ?: return@get
                 if (path.isBlank() || path == "/") {
                     path = "index.html" // Default to index.html for root
                 }
-
-                // Check if the path refers to a directory in assets and append index.html
+                val assetPath = "web/$path"
                 try {
-                    val assetManager = service.applicationContext.assets
-                    val assetPathPrefix = "web/"
-                    val fullAssetPath = assetPathPrefix + path
-                    if (assetManager.list(fullAssetPath)?.isNotEmpty() == true) {
-                        // It's a directory, try to serve index.html from it
-                        path += "/index.html"
-                    }
-                } catch (_: IOException) {
-                    // Not a directory, or doesn't exist in assets, continue
-                }
-
-                val contentType = ContentType.fromFileExtension(path).firstOrNull() ?: ContentType.Application.OctetStream
-                val cacheDir = java.io.File(service.cacheDir, "web_cache")
-                val safePath = path.substringAfterLast('/').substringAfterLast('\\')
-                val cachedFile = java.io.File(cacheDir, safePath)
-
-                if (cachedFile.exists() && cachedFile.isFile) {
-                    logMessageCallback("Serving from cache: $path")
-                    call.respondOutputStream(contentType) {
-                        cachedFile.inputStream().copyTo(this)
-                    }
-                    return@get
-                }
-
-                try {
-                    val assetPath = "web/$path"
                     service.applicationContext.assets.open(assetPath).use { inputStream ->
-                        logMessageCallback("Serving from assets: $path")
+                        val contentType = ContentType.fromFileExtension(path).firstOrNull()
+                            ?: ContentType.Application.OctetStream
                         call.respondOutputStream(contentType) {
                             inputStream.copyTo(this)
                         }
                     }
-                } catch (_: IOException) {
-                    logMessageCallback("File not found in cache or assets: $path")
-                    call.respond(HttpStatusCode.NotFound, "File not found: $path")
+                } catch (e: IOException) {
+                    call.respond(HttpStatusCode.NotFound, "File not found: $assetPath")
                 }
             }
         }
@@ -200,64 +237,50 @@ class LocalHttpServer(
         try {
             logMessageCallback("Attempting to start LocalHttpServer...")
             server.start(wait = false)
-            logMessageCallback("LocalHttpServer started successfully.")
+            logMessageCallback("LocalHttpServer started successfully on port $PORT.")
             return true
         } catch (_: BindException) {
             logMessageCallback("Port $PORT is already in use. Please close the other application and restart the service.")
             return false
         } catch (e: Exception) {
             logMessageCallback("An unexpected error occurred while starting the LocalHttpServer: ${e.message}")
-            e.printStackTrace()
+            Log.e("LocalHttpServer", "Start failed", e)
             return false
         }
     }
 
     fun stop() {
         server.stop(1000, 1000)
+        httpClient.close()
     }
 
-    private fun getTestPageHtml(statusHtml: String, messagesHtml: String): String {
-        return """
-            <!DOCTYPE html>
-            <html lang="en">
-            <head>
-                <meta charset="UTF-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>LocalMesh Test Page</title>
-                <style>
-                    body { font-family: sans-serif; margin: 2em; }
-                    #messages { border: 1px solid #ccc; padding: 1em; margin-top: 1em; min-height: 100px; max-height: 300px; overflow-y: auto; }
-                    .message { border-bottom: 1px solid #eee; padding: 0.5em; }
-                    form { margin-top: 1em; }
-                    input { margin-bottom: 0.5em; }
-                </style>
-            </head>
-            <body>
-                <h1>LocalMesh Test Page</h1>
-                
-                <h2>Status</h2>
-                <div id="status">${statusHtml}</div>
-                
-                <h2>Send Message</h2>
-                <form action="/send-message-from-test" method="post">
-                    <input type="text" name="messageInput" size="40" placeholder="Enter message to send">
-                    <button type="submit">Send</button>
-                </form>
+    /**
+     * Receives a request from a peer and dispatches it to the local Ktor server.
+     */
+    suspend fun dispatchRequest(wrapper: HttpRequestWrapper) {
+        // Prevent re-dispatching a request that originated from this node
+        if (wrapper.sourceNodeId == service.getEndpointName()) {
+            logMessageCallback("Not dispatching own request: ${wrapper.path}")
+            return
+        }
 
-                <h2>Send File</h2>
-                <form action="/send-file" method="post" enctype="multipart/form-data">
-                    <input type="file" name="file">
-                    <button type="submit">Send File</button>
-                </form>
-                
-                <h2>Received Messages</h2>
-                <div id="messages">${messagesHtml}</div>
+        val url = "http://localhost:$PORT${wrapper.path}?sourceNodeId=${wrapper.sourceNodeId}"
+        logMessageCallback("Dispatching request from ${wrapper.sourceNodeId}: ${wrapper.method} $url")
 
-                <hr>
-                <small>Refresh the page to see updates.</small>
-            </body>
-            </html>
-        """.trimIndent()
+        try {
+            val response = httpClient.request(url) {
+                method = HttpMethod.parse(wrapper.method)
+                // The body is now part of the params string
+                if (method == HttpMethod.Post && wrapper.params.isNotEmpty()) {
+                    val bodyContent = wrapper.params.substringAfter('&', "")
+                    setBody(TextContent(bodyContent, ContentType.Application.FormUrlEncoded))
+                }
+            }
+            logMessageCallback("Dispatched request '${wrapper.path}' from '${wrapper.sourceNodeId}' completed with status: ${response.status}")
+        } catch (e: Exception) {
+            logMessageCallback("Error dispatching request from '${wrapper.sourceNodeId}': ${e.message}")
+            Log.e("LocalHttpServer", "Dispatch failed", e)
+        }
     }
 
     companion object {

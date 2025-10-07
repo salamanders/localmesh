@@ -15,6 +15,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import info.benjaminhill.localmesh.ui.theme.LocalMeshTheme
 
+/**
+ * An activity dedicated to displaying web content in a full-screen WebView.
+ *
+ * ## What it does
+ * - Renders a web page from a given URL, typically pointing to the local Ktor server.
+ * - Enables JavaScript and allows camera/mic permissions for rich web applications.
+ * - Enables remote debugging for the WebView in debug builds.
+ *
+ * ## What it doesn't do
+ * - It does not contain any application logic itself. It is a generic container for web content.
+ */
 class WebViewActivity : ComponentActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {

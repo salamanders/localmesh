@@ -9,12 +9,16 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Handles writing log messages to a persistent file.
- * This class creates and appends logs to a file named "app_log.txt"
- * located in a "logs" subdirectory of the app's internal files directory.
- * Each log entry is timestamped.
+ * A simple utility for writing timestamped log messages to a persistent file.
  *
- * @param context The application context, used to access the file system.
+ * ## What it does
+ * - Appends log messages to a file named `app_log.txt` in the app's internal storage.
+ * - Creates the log file and directory if they don't exist.
+ * - Prefixes each log message with a `yyyy-MM-dd HH:mm:ss.SSS` timestamp.
+ *
+ * ## What it doesn't do
+ * - It does not handle log rotation or log level filtering. It is a simple append-only logger.
+ * - It does not display logs in the UI; that is handled by `AppStateHolder`.
  */
 class LogFileWriter(private val context: Context) {
 

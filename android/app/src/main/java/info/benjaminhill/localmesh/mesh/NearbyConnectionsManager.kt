@@ -21,12 +21,31 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.UUID
 import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.math.pow
 
+/**
+ * Manages all peer-to-peer network interactions using the Google Nearby Connections API.
+ *
+ * ## What it does
+ * - Handles device discovery, advertising, and connection management.
+ * - Establishes a many-to-many mesh network using the `P2P_CLUSTER` strategy.
+ * - Sends and receives `Payload` objects (both `BYTES` and `STREAM`) to and from all connected peers.
+ * - Manages connection retries with exponential backoff.
+ *
+ * ## What it doesn't do
+ * - It does not interpret the content of the payloads it sends or receives. It is a transport layer,
+ *   passing raw payloads up to the `BridgeService`.
+ * - It is not aware of the HTTP server or the application's specific API endpoints.
+ *
+ * ## Comparison to other classes
+ * - **[BridgeService]:** This class is the workhorse for P2P communication, while `BridgeService` acts
+ *   as the orchestrator, connecting this manager to the `LocalHttpServer`.
+ */
 class NearbyConnectionsManager(
     private val context: Context,
-    private val endpointName: String,
+    private val endpointName: String = UUID.randomUUID().toString().substring(0, 4),
     private val peerCountUpdateCallback: (Int) -> Unit,
     private val logMessageCallback: (String) -> Unit,
     private val payloadReceivedCallback: (endpointId: String, payload: Payload) -> Unit
@@ -166,7 +185,10 @@ class NearbyConnectionsManager(
         }
 
     private val endpointDiscoveryCallback = object : EndpointDiscoveryCallback() {
-        override fun onEndpointFound(endpointId: String, discoveredEndpointInfo: DiscoveredEndpointInfo) {
+        override fun onEndpointFound(
+            endpointId: String,
+            discoveredEndpointInfo: DiscoveredEndpointInfo
+        ) {
             logMessageCallback("onEndpointFound: ${discoveredEndpointInfo.endpointName} (id:$endpointId)")
             requestConnection(endpointId)
         }
@@ -178,7 +200,11 @@ class NearbyConnectionsManager(
 
     private fun requestConnection(endpointId: String) {
         try {
-            connectionsClient.requestConnection(endpointName, endpointId, connectionLifecycleCallback)
+            connectionsClient.requestConnection(
+                endpointName,
+                endpointId,
+                connectionLifecycleCallback
+            )
                 .addOnSuccessListener {
                     logMessageCallback("Connection request sent to $endpointId.")
                     retryCounts.remove(endpointId) // Clear on success

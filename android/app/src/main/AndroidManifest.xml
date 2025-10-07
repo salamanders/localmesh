@@ -38,10 +38,11 @@
             </intent-filter>
         </activity>
         <service
-            android:name=".mesh.P2PBridgeService"
+            android:name=".mesh.BridgeService"
             android:foregroundServiceType="connectedDevice" />
         <activity
             android:name=".WebViewActivity"
+            android:hardwareAccelerated="true"
             android:theme="@style/Theme.LocalMesh" />
     </application>
 
