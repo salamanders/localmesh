@@ -13,5 +13,3 @@ export PATH="$PATH:$ANDROID_SDK_ROOT/platform-tools"
 
 sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.1.0"
 yes | sdkmanager --licenses
-cd android
-./gradlew build

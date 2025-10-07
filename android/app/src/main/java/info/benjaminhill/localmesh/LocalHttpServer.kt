@@ -83,7 +83,7 @@ class LocalHttpServer(
      * A Ktor plugin that intercepts outgoing local requests and broadcasts them to peers.
      * It decides whether a request should be executed locally, broadcast to peers, or both.
      */
-    private val p2pBroadcastInterceptor =
+    internal val p2pBroadcastInterceptor =
         createApplicationPlugin(name = "P2PBroadcastInterceptor") {
             onCall { call ->
                 // --- Step 1: Determine the Strategy ---
