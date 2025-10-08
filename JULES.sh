@@ -1,4 +1,5 @@
 # Setup Android development environment for jules
+# IMPORTANT: If this is NOT being run inside jules.google.com, (e.g. being run from gemini-cli): this can be skipped and instead run `./gradlew assembleDebug` in the `android` folder.
 
 wget -q https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip -O /tmp/tools.zip
 unzip /tmp/tools.zip -d /tmp/tools
