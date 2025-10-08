@@ -82,6 +82,7 @@ dependencies {
     implementation(libs.slf4j.simple)
     implementation(platform(libs.androidx.compose.bom))
 
+    testImplementation(libs.ktor.server.test.host)
     testImplementation(libs.junit)
     testImplementation(libs.mockito.core)
     testImplementation(libs.robolectric)
@@ -89,5 +90,4 @@ dependencies {
     testImplementation(libs.core.ktx)
     testImplementation(libs.mockito.kotlin)
     testImplementation(libs.androidx.junit)
-    testImplementation(libs.ktor.server.test.host)
 }
