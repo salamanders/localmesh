@@ -1,7 +1,9 @@
 package info.benjaminhill.localmesh
 
 import android.content.Intent
+import android.content.res.AssetManager
 import android.util.Log
+import androidx.preference.isNotEmpty
 import info.benjaminhill.localmesh.mesh.BridgeService
 import info.benjaminhill.localmesh.mesh.HttpRequestWrapper
 
@@ -38,7 +40,16 @@ import java.io.File
 import java.io.IOException
 import java.net.BindException
 import java.net.URLDecoder
+import kotlinx.serialization.Serializable
 import io.ktor.server.cio.CIO as KtorCIO
+
+@Serializable
+data class StatusResponse(
+    val status: String,
+    val id: String,
+    val peerCount: Int,
+    val peerIds: List<String>
+)
 
 /**
  * A Ktor-based web server that runs on the Android device, serving the web UI and handling API requests.
@@ -66,55 +77,30 @@ class LocalHttpServer(
     private val logMessageCallback: (String) -> Unit
 ) {
 
-    // Define the possible broadcast strategies
-    private sealed class BroadcastStrategy {
-        data object LocalOnly : BroadcastStrategy() // Execute locally, do not broadcast.
-        data object BroadcastAndExecute :
-            BroadcastStrategy() // Broadcast to peers AND execute locally.
-
-        data object BroadcastOnly :
-            BroadcastStrategy() // Broadcast to peers, DO NOT execute locally.
-        //data object ReplyOnly : BroadcastStrategy() // Reply to sender with the result of the execution.
-    }
-
     private val httpClient = HttpClient(CIO)
 
     /**
-     * A Ktor plugin that intercepts outgoing local requests and broadcasts them to peers.
-     * It decides whether a request should be executed locally, broadcast to peers, or both.
+     * A Ktor plugin that intercepts local requests and broadcasts them to peers.
+     * It decides whether a request should be broadcast to peers based on a predefined set of paths.
      */
     internal val p2pBroadcastInterceptor =
         createApplicationPlugin(name = "P2PBroadcastInterceptor") {
+            val broadcastPaths = setOf("/chat", "/display")
+
             onCall { call ->
-                // --- Step 1: Determine the Strategy ---
+                // --- Step 1: Check if the request should be broadcast ---
                 val isFromPeer = call.request.queryParameters["sourceNodeId"] != null
-                if (isFromPeer) {
-                    // All requests from peers should execute locally and stop.
+                val path = call.request.path()
+
+                if (isFromPeer || path !in broadcastPaths) {
+                    // Let the request proceed normally without broadcasting.
                     return@onCall
                 }
 
-                val path = call.request.path()
-
-                val strategy = when (path) {
-                    // These paths are broadcast to peers and also executed locally.
-                    "/display" -> BroadcastStrategy.BroadcastAndExecute
-                    // These paths are broadcast to peers and NOT executed locally on the originating device.
-                    "/chat" -> BroadcastStrategy.BroadcastOnly
-
-                    // All other paths (/status, /send-file, /assets) are local only.
-                    else -> BroadcastStrategy.LocalOnly
-                }
-
-                // --- Step 2: Execute the Strategy ---
-                if (strategy is BroadcastStrategy.LocalOnly) {
-                    return@onCall // Let the request proceed to the route handler.
-                }
-
-                // --- Logic for Broadcasting ---
-                // This code only runs for BroadcastOnly.
+                // --- Step 2: Broadcast the request and stop local execution ---
 
                 // For POST requests, we need to read the body to broadcast it.
-                // We DON'T need to cache it because we won't execute locally.
+                // We stop local execution, so we don't need to cache the body for later.
                 val body: String = if (call.request.httpMethod == HttpMethod.Post) {
                     call.receiveText()
                 } else {
@@ -132,6 +118,7 @@ class LocalHttpServer(
                 service.broadcast(wrapper.toJson())
 
                 // Stop the pipeline for this request by responding immediately.
+                // This prevents the controller from executing the command itself.
                 call.respond(HttpStatusCode.OK, "Request broadcasted to peers.")
             }
         }
@@ -145,21 +132,23 @@ class LocalHttpServer(
         routing {
             get("/folders") {
                 try {
-                    val assetList =
-                        service.applicationContext.assets.list("web")?.toList() ?: emptyList()
+                    val assetList = service.applicationContext.assets.list("web")
+                        ?.filter { assetName ->
+                            service.applicationContext.assets.isDirectory("web/$assetName")
+                        } ?: emptyList()
                     call.respond(assetList)
                 } catch (e: IOException) {
-                    call.respond(HttpStatusCode.InternalServerError, "Error listing asset folders.")
+                    call.respond(HttpStatusCode.InternalServerError, "Error listing asset folders: ${e.message}")
                 }
             }
             get("/status") {
                 // A simple report of the service's status and number of peers
                 call.respond(
-                    mapOf(
-                        "status" to HttpStatusCode.OK,
-                        "id" to service.getEndpointName(),
-                        "peerCount" to service.getConnectedPeerCount(),
-                        "peerIds" to service.getConnectedPeerIds()
+                    StatusResponse(
+                        status = service.getCurrentState().javaClass.simpleName,
+                        id = service.getEndpointName(),
+                        peerCount = service.getConnectedPeerCount(),
+                        peerIds = service.getConnectedPeerIds()
                     )
                 )
             }
@@ -329,5 +318,17 @@ class LocalHttpServer(
 
         // Attribute to cache the request body
         val RequestBodyAttribute = AttributeKey<String>("RequestBodyAttribute")
+
+        // Extension function to check if an asset path is a directory
+        fun AssetManager.isDirectory(path: String): Boolean {
+            // A path is a directory if it's not empty and we can list its contents.
+            // A file will throw an IOException, which list() catches and returns null.
+            // An empty directory will return an empty array, which is a valid directory.
+            return !path.endsWith("/") && try {
+                this.list(path)?.isNotEmpty() == true
+            } catch (_: IOException) {
+                false
+            }
+        }
     }
 }

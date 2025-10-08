@@ -3,10 +3,14 @@ package info.benjaminhill.localmesh
 import android.annotation.SuppressLint
 import android.content.pm.ApplicationInfo
 import android.os.Bundle
+import android.util.Log
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -46,6 +50,24 @@ class WebViewActivity : ComponentActivity() {
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
                         settings.cacheMode = WebSettings.LOAD_NO_CACHE
+
+                        // Capture and log web errors to Logcat under our app's tag.
+                        // This is crucial for debugging, as WebView errors can otherwise
+                        // be difficult to spot in the system-wide log.
+                        webViewClient = object : WebViewClient() {
+                            @SuppressLint("WebViewClientOnReceivedSslError")
+                            override fun onReceivedError(
+                                view: WebView?,
+                                request: WebResourceRequest?,
+                                error: WebResourceError?
+                            ) {
+                                super.onReceivedError(view, request, error)
+                                val url = request?.url?.toString() ?: ""
+                                val description = error?.description ?: ""
+                                Log.e("WebViewActivity", "WebView Error: '$description' on $url")
+                            }
+                        }
+
                         webChromeClient = object : WebChromeClient() {
                             override fun onPermissionRequest(request: PermissionRequest) {
                                 request.grant(request.resources)

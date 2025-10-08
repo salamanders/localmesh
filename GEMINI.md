@@ -51,6 +51,12 @@ For a fully automated setup and build process, use the provided `JULES.sh` scrip
 bash JULES.sh
 ```
 
+**Note for gemini-cli users:** If you are running in the gemini-cli environment, you should instead run the following command from the `android` directory:
+
+```bash
+./gradlew assembleDebug
+```
+
 NOTE: that the app is in the "android" subdirectory.
 
 1. For ALL major changes, reload the target file if there is even one failed edit.

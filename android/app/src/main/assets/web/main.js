@@ -15,7 +15,7 @@ async function updateStatus() {
         const data = await response.json();
 
         deviceIdSpan.textContent = data.id || '...';
-        statusTextSpan.textContent = 'Running';
+        statusTextSpan.textContent = data.status || 'Unknown';
         peerCountSpan.textContent = data.peerCount;
 
         if (data.peerCount > 0) {

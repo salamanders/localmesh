@@ -165,6 +165,8 @@ class BridgeService : Service() {
 
     fun getEndpointName(): String = endpointName
 
+    fun getCurrentState(): BridgeState = currentState
+
     private fun start() {
         sendLogMessage("BridgeService.start()")
         if (currentState !is BridgeState.Idle) {
@@ -173,10 +175,18 @@ class BridgeService : Service() {
         }
         currentState = BridgeState.Starting
 
+        // Start the local HTTP server immediately.
+        if (!localHttpServer.start()) {
+            sendLogMessage("FATAL: LocalHttpServer failed to start.")
+            currentState = BridgeState.Error("HTTP server failed to start.")
+            stopSelf()
+            return
+        }
+
         if (!checkHardwareAndPermissions()) {
             currentState =
                 BridgeState.Error("Hardware or permissions not met.")
-            stopSelf()
+            // Do not stop the entire service, the web UI might be useful.
             return
         }
 
@@ -194,12 +204,6 @@ class BridgeService : Service() {
 
         startForeground(1, notification, FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
         nearbyConnectionsManager.start()
-        if (!localHttpServer.start()) {
-            sendLogMessage("FATAL: LocalHttpServer failed to start.")
-            currentState = BridgeState.Error("HTTP server failed to start.")
-            stopSelf()
-            return
-        }
         acquireWakeLock()
         currentState = BridgeState.Running
         sendLogMessage("Service started and running.")
