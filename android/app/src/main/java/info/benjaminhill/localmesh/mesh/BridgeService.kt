@@ -23,7 +23,6 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
@@ -51,11 +50,12 @@ class BridgeService : Service() {
 
     internal lateinit var nearbyConnectionsManager: NearbyConnectionsManager
     internal lateinit var localHttpServer: LocalHttpServer
-    private lateinit var endpointName: String
+    internal lateinit var endpointName: String
     private var wakeLock: PowerManager.WakeLock? = null
-    private lateinit var logFileWriter: LogFileWriter
+    internal lateinit var logFileWriter: LogFileWriter
 
     internal val incomingFilePayloads = ConcurrentHashMap<Long, String>()
+    internal var ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 
     override fun onCreate() {
         super.onCreate()
@@ -98,7 +98,7 @@ class BridgeService : Service() {
     internal fun handleBytesPayload(payload: Payload) {
         val jsonString = payload.asBytes()!!.toString(Charsets.UTF_8)
         val wrapper = HttpRequestWrapper.fromJson(jsonString)
-        CoroutineScope(Dispatchers.IO).launch {
+        CoroutineScope(ioDispatcher).launch {
             localHttpServer.dispatchRequest(wrapper)
         }
     }

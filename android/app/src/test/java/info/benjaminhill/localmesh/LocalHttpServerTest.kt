@@ -41,19 +41,19 @@ class LocalHttpServerTest {
         application {
             install(localHttpServer.p2pBroadcastInterceptor)
             routing {
-                get("/test") {
+                get("/chat") {
                     call.respond(HttpStatusCode.OK)
                 }
             }
         }
 
-        client.get("/test?param1=value1")
+        client.get("/chat?param1=value1")
 
         val captor = argumentCaptor<String>()
         verify(mockBridgeService).broadcast(captor.capture())
 
         val broadcastRequest = HttpRequestWrapper.fromJson(captor.firstValue)
-        assertEquals("/test", broadcastRequest.path)
+        assertEquals("/chat", broadcastRequest.path)
         assertEquals("GET", broadcastRequest.method)
         assertEquals("param1=value1", broadcastRequest.params)
         assertEquals("test-node", broadcastRequest.sourceNodeId)
@@ -64,13 +64,13 @@ class LocalHttpServerTest {
         application {
             install(localHttpServer.p2pBroadcastInterceptor)
             routing {
-                post("/test-post") {
+                post("/chat") {
                     call.respond(HttpStatusCode.OK)
                 }
             }
         }
 
-        client.post("/test-post") {
+        client.post("/chat") {
             contentType(ContentType.Application.FormUrlEncoded)
             setBody("field1=data1&field2=data2")
         }
@@ -79,7 +79,7 @@ class LocalHttpServerTest {
         verify(mockBridgeService).broadcast(captor.capture())
 
         val broadcastRequest = HttpRequestWrapper.fromJson(captor.firstValue)
-        assertEquals("/test-post", broadcastRequest.path)
+        assertEquals("/chat", broadcastRequest.path)
         assertEquals("POST", broadcastRequest.method)
         assertEquals("&field1=data1&field2=data2", broadcastRequest.params)
         assertEquals("test-node", broadcastRequest.sourceNodeId)
@@ -90,13 +90,13 @@ class LocalHttpServerTest {
         application {
             install(localHttpServer.p2pBroadcastInterceptor)
             routing {
-                post("/test-post") {
+                post("/chat") {
                     call.respond(HttpStatusCode.OK)
                 }
             }
         }
 
-        client.post("/test-post?query=qval") {
+        client.post("/chat?query=qval") {
             contentType(ContentType.Application.FormUrlEncoded)
             setBody("body=bval")
         }
@@ -105,7 +105,7 @@ class LocalHttpServerTest {
         verify(mockBridgeService).broadcast(captor.capture())
 
         val broadcastRequest = HttpRequestWrapper.fromJson(captor.firstValue)
-        assertEquals("/test-post", broadcastRequest.path)
+        assertEquals("/chat", broadcastRequest.path)
         assertEquals("POST", broadcastRequest.method)
         assertEquals("query=qval&body=bval", broadcastRequest.params)
         assertEquals("test-node", broadcastRequest.sourceNodeId)
