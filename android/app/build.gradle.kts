@@ -80,6 +80,7 @@ dependencies {
     implementation(libs.ktor.server.core)
     implementation(libs.ktor.client.cio)
     implementation(libs.slf4j.simple)
+    implementation(libs.androidx.fragment.ktx)
     implementation(platform(libs.androidx.compose.bom))
 
     testImplementation(libs.androidx.junit)

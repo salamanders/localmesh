@@ -55,7 +55,8 @@ class LocalHttpServerTest {
         val broadcastRequest = HttpRequestWrapper.fromJson(captor.firstValue)
         assertEquals("/chat", broadcastRequest.path)
         assertEquals("GET", broadcastRequest.method)
-        assertEquals("param1=value1", broadcastRequest.params)
+        assertEquals("param1=value1", broadcastRequest.queryParams)
+        assertEquals("", broadcastRequest.body)
         assertEquals("test-node", broadcastRequest.sourceNodeId)
     }
 
@@ -81,7 +82,8 @@ class LocalHttpServerTest {
         val broadcastRequest = HttpRequestWrapper.fromJson(captor.firstValue)
         assertEquals("/chat", broadcastRequest.path)
         assertEquals("POST", broadcastRequest.method)
-        assertEquals("&field1=data1&field2=data2", broadcastRequest.params)
+        assertEquals("", broadcastRequest.queryParams)
+        assertEquals("field1=data1&field2=data2", broadcastRequest.body)
         assertEquals("test-node", broadcastRequest.sourceNodeId)
     }
 
@@ -107,7 +109,8 @@ class LocalHttpServerTest {
         val broadcastRequest = HttpRequestWrapper.fromJson(captor.firstValue)
         assertEquals("/chat", broadcastRequest.path)
         assertEquals("POST", broadcastRequest.method)
-        assertEquals("query=qval&body=bval", broadcastRequest.params)
+        assertEquals("query=qval", broadcastRequest.queryParams)
+        assertEquals("body=bval", broadcastRequest.body)
         assertEquals("test-node", broadcastRequest.sourceNodeId)
     }
 

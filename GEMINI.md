@@ -12,8 +12,10 @@ The core architectural principle is a **Pass-Through Web Server**. All actions, 
 
 The system is composed of three main parts:
 
-1.  **Web Page (Frontend):** A user-facing interface running in a mobile web browser. It interacts with the LocalHttpServer for all actions.
+1.  **Web Page (Frontend):** A user-facing single-page application running in a `WebView` (or standard mobile browser). It interacts with the `LocalHttpServer` for all actions, including fetching status and triggering commands.
 2.  **LocalMesh App (Middleware):** The native Android application that runs as a background service. It consists of:
+    *   **`MainActivity`:** A simple activity with a single button to start the service and launch the `WebViewActivity`.
+    *   **`WebViewActivity`:** An activity that hosts the full-screen `WebView` for the main UI.
     *   **`BridgeService`:** A foreground `Service` that orchestrates the networking components. Its primary role is to forward messages between the `NearbyConnectionsManager` and the `LocalHttpServer`.
     *   **`LocalHttpServer`:** A lightweight Ktor-based HTTP server running on `http://localhost:8099`. It contains all application logic in its routing block. It uses a custom interceptor to automatically broadcast any incoming local requests to all peers.
     *   **`NearbyConnectionsManager`:** The core of the P2P functionality. It uses the Google Play Services Nearby Connections API with the `P2P_CLUSTER` strategy to manage a many-to-many mesh network. It handles device discovery, connection management, and payload transfer.
@@ -72,3 +74,8 @@ The Ktor server in `LocalHttpServer.kt` defines the following routes:
 *   `POST /send-file`: Initiates a file transfer. This is a multipart endpoint expected to be called from the local web UI.
 *   `POST /file-received`: A notification endpoint used internally to log when a file transfer is complete.
 *   `GET /{path...}`: A general-purpose route to serve static files from the `assets/web` directory.
+
+## Coding Guidelines
+
+*   When modeling data for transfer, prefer explicit fields over combined ones using special separators. This improves clarity and maintainability by reducing the need for custom parsing logic.
+*   Before refactoring a shared class or data structure (e.g., `HttpRequestWrapper`), perform a global search for its name to identify all usages across the project. This ensures all dependent files (`LocalHttpServer`, `BridgeService`, tests, etc.) are updated simultaneously, preventing build failures.

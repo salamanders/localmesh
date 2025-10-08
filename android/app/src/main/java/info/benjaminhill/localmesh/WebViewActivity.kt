@@ -13,7 +13,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
-import info.benjaminhill.localmesh.ui.theme.LocalMeshTheme
+
 
 /**
  * An activity dedicated to displaying web content in a full-screen WebView.
@@ -40,24 +40,22 @@ class WebViewActivity : ComponentActivity() {
             ?: "http://localhost:${LocalHttpServer.PORT}/index.html"
 
         setContent {
-            LocalMeshTheme {
-                AndroidView(
-                    factory = { context ->
-                        WebView(context).apply {
-                            settings.javaScriptEnabled = true
-                            settings.domStorageEnabled = true
-                            settings.cacheMode = WebSettings.LOAD_NO_CACHE
-                            webChromeClient = object : WebChromeClient() {
-                                override fun onPermissionRequest(request: PermissionRequest) {
-                                    request.grant(request.resources)
-                                }
+            AndroidView(
+                factory = { context ->
+                    WebView(context).apply {
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        settings.cacheMode = WebSettings.LOAD_NO_CACHE
+                        webChromeClient = object : WebChromeClient() {
+                            override fun onPermissionRequest(request: PermissionRequest) {
+                                request.grant(request.resources)
                             }
-                            loadUrl(url)
                         }
-                    },
-                    modifier = Modifier.fillMaxSize()
-                )
-            }
+                        loadUrl(url)
+                    }
+                },
+                modifier = Modifier.fillMaxSize()
+            )
         }
     }
 

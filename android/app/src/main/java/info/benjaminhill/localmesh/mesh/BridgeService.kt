@@ -18,7 +18,6 @@ import info.benjaminhill.localmesh.LocalHttpServer
 import info.benjaminhill.localmesh.LogFileWriter
 import info.benjaminhill.localmesh.MainActivity
 import info.benjaminhill.localmesh.R
-import info.benjaminhill.localmesh.ui.AppStateHolder
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -48,6 +47,8 @@ import java.util.concurrent.ConcurrentHashMap
  */
 class BridgeService : Service() {
 
+    private var currentState: BridgeState = BridgeState.Idle
+
     internal lateinit var nearbyConnectionsManager: NearbyConnectionsManager
     internal lateinit var localHttpServer: LocalHttpServer
     internal lateinit var endpointName: String
@@ -71,9 +72,7 @@ class BridgeService : Service() {
                 nearbyConnectionsManager = NearbyConnectionsManager(
                     context = this,
                     endpointName = endpointName,
-                    peerCountUpdateCallback = {
-                        AppStateHolder.statusText.value = "Running - $it Peers"
-                    },
+                    peerCountUpdateCallback = { /* No-op, web UI will poll /status */ },
                     logMessageCallback = ::sendLogMessage
                 ) { _, payload ->
                     try {
@@ -91,7 +90,7 @@ class BridgeService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "onCreate: CRASHED: ${e.message}", e)
             sendLogMessage("FATAL: Service crashed on create: ${e.message}")
-            AppStateHolder.currentState.value = BridgeState.Error("onCreate failed")
+            currentState = BridgeState.Error("onCreate failed")
         }
     }
 
@@ -133,29 +132,8 @@ class BridgeService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.i(TAG, "onStartCommand() called with action: ${intent?.action}")
         when (intent?.action) {
-            BridgeAction.Start::class.java.name -> start()
-            BridgeAction.Stop::class.java.name -> stop()
-            BridgeAction.BroadcastCommand::class.java.name -> {
-                if (AppStateHolder.currentState.value !is BridgeState.Running) {
-                    sendLogMessage("Cannot broadcast command while service is not running.")
-                    return START_STICKY
-                }
-                val command = intent.getStringExtra(EXTRA_COMMAND)
-                val payload = intent.getStringExtra(EXTRA_PAYLOAD)
-                if (command != null && payload != null) {
-                    val wrapper = HttpRequestWrapper(
-                        method = "GET", // Or derive from command if needed
-                        path = "/$command",
-                        params = "path=$payload",
-                        sourceNodeId = endpointName
-                    )
-                    broadcast(wrapper.toJson())
-                    sendLogMessage("Broadcasted command: $command with payload: $payload")
-                } else {
-                    sendLogMessage("Broadcast command received with null command or payload.")
-                }
-            }
-
+            ACTION_START -> start()
+            ACTION_STOP -> stop()
             else -> Log.w(TAG, "onStartCommand: Unknown action: ${intent?.action}")
         }
         return START_STICKY
@@ -170,7 +148,8 @@ class BridgeService : Service() {
         val wrapper = HttpRequestWrapper(
             method = "POST",
             path = "/file-received",
-            params = "filename=${file.name}&payloadId=${streamPayload.id}",
+            queryParams = "filename=${file.name}&payloadId=${streamPayload.id}",
+            body = "",
             sourceNodeId = endpointName
         )
         broadcast(wrapper.toJson())
@@ -188,17 +167,15 @@ class BridgeService : Service() {
 
     private fun start() {
         sendLogMessage("BridgeService.start()")
-        if (AppStateHolder.currentState.value !is BridgeState.Idle) {
-            sendLogMessage("Service is not idle, cannot start. Current state: ${AppStateHolder.currentState.value::class.java.simpleName}")
+        if (currentState !is BridgeState.Idle) {
+            sendLogMessage("Service is not idle, cannot start. Current state: ${currentState::class.java.simpleName}")
             return
         }
-        AppStateHolder.currentState.value = BridgeState.Starting
-        AppStateHolder.statusText.value = "Starting..."
+        currentState = BridgeState.Starting
 
         if (!checkHardwareAndPermissions()) {
-            AppStateHolder.currentState.value =
+            currentState =
                 BridgeState.Error("Hardware or permissions not met.")
-            AppStateHolder.statusText.value = "Error: Check permissions"
             stopSelf()
             return
         }
@@ -217,18 +194,14 @@ class BridgeService : Service() {
 
         startForeground(1, notification, FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
         nearbyConnectionsManager.start()
-        if (localHttpServer.start()) {
-            AppStateHolder.serverUrl.value = "http://localhost:${LocalHttpServer.PORT}"
-        } else {
+        if (!localHttpServer.start()) {
             sendLogMessage("FATAL: LocalHttpServer failed to start.")
-            AppStateHolder.currentState.value = BridgeState.Error("HTTP server failed to start.")
-            AppStateHolder.statusText.value = "Error: HTTP server failed"
+            currentState = BridgeState.Error("HTTP server failed to start.")
             stopSelf()
             return
         }
         acquireWakeLock()
-        AppStateHolder.currentState.value = BridgeState.Running
-        AppStateHolder.statusText.value = "Running - 0 Peers"
+        currentState = BridgeState.Running
         sendLogMessage("Service started and running.")
     }
 
@@ -263,9 +236,7 @@ class BridgeService : Service() {
 
     private fun stop() {
         sendLogMessage("BridgeService.stop()")
-        AppStateHolder.currentState.value = BridgeState.Stopping
-        AppStateHolder.statusText.value = "Stopping..."
-        AppStateHolder.serverUrl.value = null
+        currentState = BridgeState.Stopping
 
         nearbyConnectionsManager.stop()
         localHttpServer.stop()
@@ -273,8 +244,7 @@ class BridgeService : Service() {
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
 
-        AppStateHolder.currentState.value = BridgeState.Idle
-        AppStateHolder.statusText.value = "Inactive"
+        currentState = BridgeState.Idle
         sendLogMessage("Service stopped.")
     }
 
@@ -303,12 +273,11 @@ class BridgeService : Service() {
     fun sendLogMessage(message: String) {
         Log.d(TAG, message)
         logFileWriter.writeLog(message)
-        AppStateHolder.addLog(message)
     }
 
     companion object {
-        const val EXTRA_COMMAND = "extra_command"
-        const val EXTRA_PAYLOAD = "extra_payload"
+        const val ACTION_START = "info.benjaminhill.localmesh.action.START"
+        const val ACTION_STOP = "info.benjaminhill.localmesh.action.STOP"
         private const val CHANNEL_ID = "P2PBridgeServiceChannel"
         private const val TAG = "BridgeService"
     }

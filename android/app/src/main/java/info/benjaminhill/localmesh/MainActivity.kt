@@ -1,73 +1,79 @@
 package info.benjaminhill.localmesh
 
+import android.Manifest
 import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
-import info.benjaminhill.localmesh.mesh.BridgeAction
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.Button
+import androidx.compose.material3.Text
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import info.benjaminhill.localmesh.mesh.BridgeService
-import info.benjaminhill.localmesh.ui.MainScreen
-import java.io.IOException
 
-/**
- * The main entry point of the application's UI.
- *
- * ## What it does
- * - Displays the main control screen of the app using Jetpack Compose (`MainScreen`).
- * - Handles user interactions from the UI, such as starting and stopping the `BridgeService`.
- * - Translates UI events into `BridgeAction` intents to be sent to the `BridgeService`.
- *
- * ## What it doesn't do
- * - It does not contain any P2P or web server logic. It is purely for UI and user interaction.
- * - It does not directly manage the state of the service; it only sends commands and observes
- *   state changes via `AppStateHolder`.
- */
 class MainActivity : ComponentActivity() {
-    private fun startP2PBridgeService(action: BridgeAction) {
-        Log.i(TAG, "MainActivity.startP2PBridgeService() with ${action::class.java.simpleName}")
-        val intent = Intent(this, BridgeService::class.java).apply {
-            this.action = action::class.java.name
-            if (action is BridgeAction.BroadcastCommand) {
-                putExtra(BridgeService.EXTRA_COMMAND, action.command)
-                putExtra(BridgeService.EXTRA_PAYLOAD, action.payload)
-            }
+
+    private val requestPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        if (permissions.all { it.value }) {
+            Log.i(TAG, "Permissions granted, starting service...")
+            startBridgeServiceAndWebView()
+        } else {
+            Log.e(TAG, "Permissions not granted. Please enable them in settings.")
+            // TODO: Show a more user-friendly message
         }
-        startService(intent)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        Log.i(TAG, "MainActivity.onCreate()")
-        enableEdgeToEdge()
-        val assetFolders = getAssetFolders()
         setContent {
-            MainScreen(
-                assetFolders = assetFolders,
-                onAction = ::startP2PBridgeService
-            )
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Button(onClick = {
+                    requestPermissionLauncher.launch(
+                        arrayOf(
+                            Manifest.permission.BLUETOOTH_SCAN,
+                            Manifest.permission.BLUETOOTH_ADVERTISE,
+                            Manifest.permission.BLUETOOTH_CONNECT,
+                            Manifest.permission.ACCESS_FINE_LOCATION,
+                            Manifest.permission.NEARBY_WIFI_DEVICES,
+                            Manifest.permission.POST_NOTIFICATIONS,
+                            Manifest.permission.NFC,
+                        )
+                    )
+                }) {
+                    Text("Start Service")
+                }
+            }
         }
     }
 
-    private fun isAssetDir(path: String): Boolean {
-        return try {
-            assets.list(path)?.isNotEmpty() == true
-        } catch (_: IOException) {
-            false
+    private fun startBridgeServiceAndWebView() {
+        // Start the service
+        val serviceIntent = Intent(this, BridgeService::class.java).apply {
+            action = BridgeService.ACTION_START
         }
-    }
+        startService(serviceIntent)
 
-    private fun getAssetFolders(): List<String> {
-        val path = "web"
-        return try {
-            assets.list(path)?.filter { isAssetDir("$path/$it") } ?: emptyList()
-        } catch (e: IOException) {
-            Log.e(TAG, "Error listing asset folders", e)
-            emptyList()
+        // Launch the web view
+        val webViewIntent = Intent(this, WebViewActivity::class.java).apply {
+            // The URL will be the root of the local server.
+            // The web UI will fetch its own data.
+            putExtra(WebViewActivity.EXTRA_URL, "http://localhost:${LocalHttpServer.PORT}")
         }
+        startActivity(webViewIntent)
+        // Close the MainActivity so the user can't navigate back to the start button.
+        finish()
     }
-
 
     companion object {
         const val TAG: String = "MainActivity"

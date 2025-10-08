@@ -23,7 +23,8 @@ import kotlinx.serialization.json.Json
 data class HttpRequestWrapper(
     val method: String,
     val path: String,
-    val params: String, // URL-encoded string of all query and/or body parameters
+    val queryParams: String,
+    val body: String,
     val sourceNodeId: String
 ) {
     fun toJson(): String {

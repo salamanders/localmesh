@@ -31,6 +31,6 @@ Alternatively, you can open the `android` directory in Android Studio and build 
 
 1.  Build and install the app on two or more nearby Android devices.
 2.  Launch the app on each device.
-3.  Tap the "Start Service" button. This will request the necessary permissions (Bluetooth, Location, etc.) and start the background service.
-4.  Once the service is running, the app will automatically discover and connect to peers.
-5.  A web page can now be loaded in a browser on the same device to interact with the service's local HTTP API (e.g., by making requests to `http://localhost:8099`).
+3.  Tap the "Start Service" button. This will request the necessary permissions and start the background service.
+4.  The app will then automatically launch the main web-based user interface.
+5.  Once the service is running, the app will automatically discover and connect to peers. The web UI will show the status and available actions.

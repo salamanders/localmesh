@@ -4,7 +4,7 @@ import android.content.Intent
 import android.util.Log
 import info.benjaminhill.localmesh.mesh.BridgeService
 import info.benjaminhill.localmesh.mesh.HttpRequestWrapper
-import info.benjaminhill.localmesh.ui.AppStateHolder
+
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.request.request
@@ -96,8 +96,10 @@ class LocalHttpServer(
                 val path = call.request.path()
 
                 val strategy = when (path) {
+                    // These paths are broadcast to peers and also executed locally.
+                    "/display" -> BroadcastStrategy.BroadcastAndExecute
                     // These paths are broadcast to peers and NOT executed locally on the originating device.
-                    "/chat", "/display" -> BroadcastStrategy.BroadcastOnly
+                    "/chat" -> BroadcastStrategy.BroadcastOnly
 
                     // All other paths (/status, /send-file, /assets) are local only.
                     else -> BroadcastStrategy.LocalOnly
@@ -123,7 +125,8 @@ class LocalHttpServer(
                 val wrapper = HttpRequestWrapper(
                     method = call.request.httpMethod.value,
                     path = path,
-                    params = call.request.queryParameters.formUrlEncode() + "%%BODY%%" + body,
+                    queryParams = call.request.queryParameters.formUrlEncode(),
+                    body = body,
                     sourceNodeId = service.getEndpointName()
                 )
                 service.broadcast(wrapper.toJson())
@@ -140,12 +143,20 @@ class LocalHttpServer(
         install(p2pBroadcastInterceptor)
 
         routing {
+            get("/folders") {
+                try {
+                    val assetList =
+                        service.applicationContext.assets.list("web")?.toList() ?: emptyList()
+                    call.respond(assetList)
+                } catch (e: IOException) {
+                    call.respond(HttpStatusCode.InternalServerError, "Error listing asset folders.")
+                }
+            }
             get("/status") {
                 // A simple report of the service's status and number of peers
                 call.respond(
                     mapOf(
                         "status" to HttpStatusCode.OK,
-                        "app_status" to AppStateHolder.currentState.value.toString(),
                         "id" to service.getEndpointName(),
                         "peerCount" to service.getConnectedPeerCount(),
                         "peerIds" to service.getConnectedPeerIds()
@@ -291,22 +302,8 @@ class LocalHttpServer(
             return
         }
 
-        val (queryParams, bodyContent) = if (wrapper.params.contains("%%BODY%%")) {
-            val parts = wrapper.params.split("%%BODY%%", limit = 2)
-            val qp = parts.getOrElse(0) { "" }
-            val body = parts.getOrElse(1) { "" }
-            qp to body
-        } else {
-            // Backwards compatibility for wrappers created outside the interceptor (e.g. BridgeService)
-            if (HttpMethod.parse(wrapper.method) == HttpMethod.Get) {
-                wrapper.params to ""
-            } else {
-                "" to wrapper.params
-            }
-        }
-
-        val url = if (queryParams.isNotEmpty()) {
-            "http://localhost:$PORT${wrapper.path}?sourceNodeId=${wrapper.sourceNodeId}&$queryParams"
+        val url = if (wrapper.queryParams.isNotEmpty()) {
+            "http://localhost:$PORT${wrapper.path}?sourceNodeId=${wrapper.sourceNodeId}&${wrapper.queryParams}"
         } else {
             "http://localhost:$PORT${wrapper.path}?sourceNodeId=${wrapper.sourceNodeId}"
         }
@@ -316,8 +313,8 @@ class LocalHttpServer(
         try {
             val response = httpClient.request(url) {
                 method = HttpMethod.parse(wrapper.method)
-                if (method == HttpMethod.Post && bodyContent.isNotEmpty()) {
-                    setBody(TextContent(bodyContent, ContentType.Application.FormUrlEncoded))
+                if (method == HttpMethod.Post && wrapper.body.isNotEmpty()) {
+                    setBody(TextContent(wrapper.body, ContentType.Application.FormUrlEncoded))
                 }
             }
             logMessageCallback("Dispatched request '${wrapper.path}' from '${wrapper.sourceNodeId}' completed with status: ${response.status}")
