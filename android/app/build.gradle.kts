@@ -29,8 +29,8 @@ android {
         }
     }
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
     }
     buildToolsVersion = "36.1.0"
 
@@ -39,7 +39,7 @@ android {
     // The toolchain is automatically downloaded and configured by Gradle if not present.
     // See: https://kotl.in/gradle/jvm/toolchain
     kotlin {
-        jvmToolchain(17)
+        jvmToolchain(21)
     }
 
     packaging {
