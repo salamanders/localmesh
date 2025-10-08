@@ -90,9 +90,11 @@ class NearbyConnectionsManager(
         sendPayload(connectedEndpoints.toList(), Payload.fromBytes(payload))
     }
 
-    fun getConnectedPeerCount(): Int = connectedEndpoints.size
+    val connectedPeerCount: Int
+        get() = connectedEndpoints.size
 
-    fun getConnectedPeerIds(): List<String> = connectedEndpoints.toList()
+    val connectedPeerIds: List<String>
+        get() = connectedEndpoints.toList()
 
     private suspend fun startAdvertising() {
         try {

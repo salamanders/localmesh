@@ -83,5 +83,23 @@ The Ktor server in `LocalHttpServer.kt` defines the following routes:
 
 ## Coding Guidelines
 
+*   **Use Scope Functions for Fluent Configuration:** When creating an object and then immediately calling methods on it (e.g., setting properties on an `Intent`), prefer using scope functions like `apply` and `also`. This groups the configuration with the object's creation, making the code more readable and concise.
+
+    *   **Avoid (Imperative Style):**
+        ```kotlin
+        val intent = Intent(this, MyActivity::class.java)
+        intent.putExtra("key", "value")
+        intent.action = "MY_ACTION"
+        startActivity(intent)
+        ```
+
+    *   **Prefer (Fluent Style):**
+        ```kotlin
+        Intent(this, MyActivity::class.java).apply {
+            putExtra("key", "value")
+            action = "MY_ACTION"
+        }.also { startActivity(it) }
+        ```
+
 *   When modeling data for transfer, prefer explicit fields over combined ones using special separators. This improves clarity and maintainability by reducing the need for custom parsing logic.
 *   Before refactoring a shared class or data structure (e.g., `HttpRequestWrapper`), perform a global search for its name to identify all usages across the project. This ensures all dependent files (`LocalHttpServer`, `BridgeService`, tests, etc.) are updated simultaneously, preventing build failures.

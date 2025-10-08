@@ -3,10 +3,8 @@ package info.benjaminhill.localmesh
 import android.content.Intent
 import android.content.res.AssetManager
 import android.util.Log
-import androidx.preference.isNotEmpty
 import info.benjaminhill.localmesh.mesh.BridgeService
 import info.benjaminhill.localmesh.mesh.HttpRequestWrapper
-
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.request.request
@@ -36,12 +34,24 @@ import io.ktor.server.routing.routing
 import io.ktor.util.AttributeKey
 import io.ktor.utils.io.readRemaining
 import kotlinx.io.readByteArray
+import kotlinx.serialization.Serializable
 import java.io.File
 import java.io.IOException
 import java.net.BindException
 import java.net.URLDecoder
-import kotlinx.serialization.Serializable
 import io.ktor.server.cio.CIO as KtorCIO
+
+// Extension function to check if an asset path is a directory
+fun AssetManager.isDirectory(path: String): Boolean {
+    // A path is a directory if it's not empty and we can list its contents.
+    // A file will throw an IOException, which list() catches and returns null.
+    // An empty directory will return an empty array, which is a valid directory.
+    return !path.endsWith("/") && try {
+        this.list(path)?.isNotEmpty() == true
+    } catch (_: IOException) {
+        false
+    }
+}
 
 @Serializable
 data class StatusResponse(
@@ -113,7 +123,7 @@ class LocalHttpServer(
                     path = path,
                     queryParams = call.request.queryParameters.formUrlEncode(),
                     body = body,
-                    sourceNodeId = service.getEndpointName()
+                    sourceNodeId = service.endpointName
                 )
                 service.broadcast(wrapper.toJson())
 
@@ -138,17 +148,20 @@ class LocalHttpServer(
                         } ?: emptyList()
                     call.respond(assetList)
                 } catch (e: IOException) {
-                    call.respond(HttpStatusCode.InternalServerError, "Error listing asset folders: ${e.message}")
+                    call.respond(
+                        HttpStatusCode.InternalServerError,
+                        "Error listing asset folders: ${e.message}"
+                    )
                 }
             }
             get("/status") {
                 // A simple report of the service's status and number of peers
                 call.respond(
                     StatusResponse(
-                        status = service.getCurrentState().javaClass.simpleName,
-                        id = service.getEndpointName(),
-                        peerCount = service.getConnectedPeerCount(),
-                        peerIds = service.getConnectedPeerIds()
+                        status = service.currentState.javaClass.simpleName,
+                        id = service.endpointName,
+                        peerCount = service.nearbyConnectionsManager.connectedPeerCount,
+                        peerIds = service.nearbyConnectionsManager.connectedPeerIds
                     )
                 )
             }
@@ -168,12 +181,12 @@ class LocalHttpServer(
                     call.respond(HttpStatusCode.BadRequest, "Missing path parameter")
                     return@get
                 }
-                val intent = Intent(service.applicationContext, WebViewActivity::class.java).apply {
-                    // Correctly form the URL
+                Intent(service.applicationContext, WebViewActivity::class.java).apply {
                     putExtra(WebViewActivity.EXTRA_URL, "http://localhost:$PORT/$path")
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }.also {
+                    service.startActivity(it)
                 }
-                service.startActivity(intent)
                 call.respond(
                     mapOf(
                         "status" to HttpStatusCode.OK,
@@ -286,7 +299,7 @@ class LocalHttpServer(
      */
     suspend fun dispatchRequest(wrapper: HttpRequestWrapper) {
         // Prevent re-dispatching a request that originated from this node
-        if (wrapper.sourceNodeId == service.getEndpointName()) {
+        if (wrapper.sourceNodeId == service.endpointName) {
             logMessageCallback("Not dispatching own request: ${wrapper.path}")
             return
         }
@@ -318,17 +331,5 @@ class LocalHttpServer(
 
         // Attribute to cache the request body
         val RequestBodyAttribute = AttributeKey<String>("RequestBodyAttribute")
-
-        // Extension function to check if an asset path is a directory
-        fun AssetManager.isDirectory(path: String): Boolean {
-            // A path is a directory if it's not empty and we can list its contents.
-            // A file will throw an IOException, which list() catches and returns null.
-            // An empty directory will return an empty array, which is a valid directory.
-            return !path.endsWith("/") && try {
-                this.list(path)?.isNotEmpty() == true
-            } catch (_: IOException) {
-                false
-            }
-        }
     }
 }

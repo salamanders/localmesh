@@ -16,6 +16,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import info.benjaminhill.localmesh.mesh.BridgeService
 
+/**
+ * The main entry point for the application.
+ *
+ * ## What it does
+ * - Displays a single "Start Service" button.
+ * - Requests all necessary permissions (Bluetooth, Location, etc.).
+ * - Once permissions are granted, it starts the [BridgeService] and launches the [WebViewActivity].
+ * - Finishes itself so the user cannot navigate back to it.
+ */
 class MainActivity : ComponentActivity() {
 
     private val requestPermissionLauncher = registerForActivityResult(
@@ -59,18 +68,20 @@ class MainActivity : ComponentActivity() {
 
     private fun startBridgeServiceAndWebView() {
         // Start the service
-        val serviceIntent = Intent(this, BridgeService::class.java).apply {
+        Intent(this, BridgeService::class.java).apply {
             action = BridgeService.ACTION_START
+        }.also {
+            startService(it)
         }
-        startService(serviceIntent)
 
         // Launch the web view
-        val webViewIntent = Intent(this, WebViewActivity::class.java).apply {
+        Intent(this, WebViewActivity::class.java).apply {
             // The URL will be the root of the local server.
             // The web UI will fetch its own data.
             putExtra(WebViewActivity.EXTRA_URL, "http://localhost:${LocalHttpServer.PORT}")
+        }.also {
+            startActivity(it)
         }
-        startActivity(webViewIntent)
         // Close the MainActivity so the user can't navigate back to the start button.
         finish()
     }

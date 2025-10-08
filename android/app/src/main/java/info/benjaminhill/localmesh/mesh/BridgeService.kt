@@ -46,12 +46,14 @@ import java.util.concurrent.ConcurrentHashMap
  *   telling it when to start and stop and receiving payloads from it.
  */
 class BridgeService : Service() {
-
-    private var currentState: BridgeState = BridgeState.Idle
+    var currentState: BridgeState = BridgeState.Idle
+        internal set
 
     internal lateinit var nearbyConnectionsManager: NearbyConnectionsManager
     internal lateinit var localHttpServer: LocalHttpServer
-    internal lateinit var endpointName: String
+     lateinit var endpointName: String
+         internal set
+
     private var wakeLock: PowerManager.WakeLock? = null
     internal lateinit var logFileWriter: LogFileWriter
 
@@ -63,7 +65,7 @@ class BridgeService : Service() {
         Log.i(TAG, "onCreate() called")
         try {
             endpointName =
-                (('A'..'Z') + ('a'..'z') + ('0'..'9')).shuffled().take(4).joinToString("")
+                (('A'..'Z') + ('a'..'z') + ('0'..'9')).shuffled().take(5).joinToString("")
             logFileWriter = LogFileWriter(applicationContext)
             if (!::localHttpServer.isInitialized) {
                 localHttpServer = LocalHttpServer(this, ::sendLogMessage)
@@ -106,10 +108,7 @@ class BridgeService : Service() {
         val filename = incomingFilePayloads.remove(payload.id)
         if (filename != null) {
             try {
-                val cacheDir = File(applicationContext.cacheDir, "web_cache")
-                if (!cacheDir.exists()) {
-                    cacheDir.mkdirs()
-                }
+                val cacheDir = File(applicationContext.cacheDir, "web_cache").also { it.mkdirs() }
                 val file = File(cacheDir, filename)
                 payload.asStream()?.asInputStream()?.use { inputStream ->
                     file.outputStream().use { outputStream ->
@@ -154,18 +153,10 @@ class BridgeService : Service() {
         )
         broadcast(wrapper.toJson())
         nearbyConnectionsManager.sendPayload(
-            nearbyConnectionsManager.getConnectedPeerIds(),
+            nearbyConnectionsManager.connectedPeerIds,
             streamPayload
         )
     }
-
-    fun getConnectedPeerCount(): Int = nearbyConnectionsManager.getConnectedPeerCount()
-
-    fun getConnectedPeerIds(): List<String> = nearbyConnectionsManager.getConnectedPeerIds()
-
-    fun getEndpointName(): String = endpointName
-
-    fun getCurrentState(): BridgeState = currentState
 
     private fun start() {
         sendLogMessage("BridgeService.start()")

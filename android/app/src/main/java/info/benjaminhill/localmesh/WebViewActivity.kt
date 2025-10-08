@@ -26,6 +26,7 @@ import androidx.compose.ui.viewinterop.AndroidView
  * - Renders a web page from a given URL, typically pointing to the local Ktor server.
  * - Enables JavaScript and allows camera/mic permissions for rich web applications.
  * - Enables remote debugging for the WebView in debug builds.
+ * - Captures and logs WebView errors to Logcat for easier debugging.
  *
  * ## What it doesn't do
  * - It does not contain any application logic itself. It is a generic container for web content.
@@ -62,9 +63,12 @@ class WebViewActivity : ComponentActivity() {
                                 error: WebResourceError?
                             ) {
                                 super.onReceivedError(view, request, error)
-                                val url = request?.url?.toString() ?: ""
+                                val requestUrl = request?.url?.toString() ?: ""
                                 val description = error?.description ?: ""
-                                Log.e("WebViewActivity", "WebView Error: '$description' on $url")
+                                Log.e(
+                                    "WebViewActivity",
+                                    "WebView Error: '$description' on $requestUrl"
+                                )
                             }
                         }
 
