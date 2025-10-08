@@ -41,19 +41,19 @@ class LocalHttpServerTest {
         application {
             install(localHttpServer.p2pBroadcastInterceptor)
             routing {
-                get("/display") {
+                get("/chat") {
                     call.respond(HttpStatusCode.OK)
                 }
             }
         }
 
-        client.get("/display?param1=value1")
+        client.get("/chat?param1=value1")
 
         val captor = argumentCaptor<String>()
         verify(mockBridgeService).broadcast(captor.capture())
 
         val broadcastRequest = HttpRequestWrapper.fromJson(captor.firstValue)
-        assertEquals("/display", broadcastRequest.path)
+        assertEquals("/chat", broadcastRequest.path)
         assertEquals("GET", broadcastRequest.method)
         assertEquals("param1=value1", broadcastRequest.params)
         assertEquals("test-node", broadcastRequest.sourceNodeId)
