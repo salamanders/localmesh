@@ -5,12 +5,12 @@ This document outlines the message flow from the user selecting a folder in the 
 ## Abstract Flow
 
 1.  **UI Interaction:** The user selects a folder from a dropdown menu in the app's main UI.
-2.  **UI to App:** The UI sends a message to the application logic indicating the user's selection.
-3.  **App to P2P Command:** The application logic converts this message into a P2P command.
-4.  **Broadcast:** The app broadcasts this command to all connected peers.
-5.  **Peer Reception:** A peer device receives the P2P command.
-6.  **P2P Command to HTTP Request:** The peer's application logic converts the P2P command back into an internal HTTP request.
-7.  **HTTP Request Processing:** The peer's internal web server processes the HTTP request.
+2.  **UI to Service:** The UI sends a `BroadcastCommand` action to the `BridgeService`.
+3.  **Service to P2P Command:** The `BridgeService` converts this action into an `HttpRequestWrapper` object.
+4.  **Broadcast:** The service broadcasts this wrapper to all connected peers via `NearbyConnectionsManager`.
+5.  **Peer Reception:** A peer device receives the `HttpRequestWrapper`.
+6.  **P2P Command to HTTP Request:** The peer's `BridgeService` dispatches the wrapper to its local `LocalHttpServer`.
+7.  **HTTP Request Processing:** The peer's `LocalHttpServer` processes the synthetic HTTP request.
 8.  **Display:** The corresponding folder's content is opened in a full-screen `WebView`.
 
 ## Detailed Implementation Flow
@@ -19,9 +19,8 @@ Here is the detailed flow with specific classes, methods, and message types:
 
 1.  **`MainActivity` and `MainScreen` (UI Layer)**
     *   **Event Trigger:** The user selects a folder (e.g., "eye") from the `FolderSelector` composable within `MainScreen.kt`.
-    *   **Action:** The `onFolderSelected` callback is invoked inside the `FolderSelector`.
-    *   **Message Creation:** This triggers the `onAction` callback passed to `MainScreen`, which is the `startP2PBridgeService` method in `MainActivity.kt`.
-    *   **Action:** `MainScreen.kt` calls `onAction(BridgeAction.BroadcastCommand("display", folderName))`.
+    *   **Action:** The `onFolderSelected` callback is invoked, which calls the `onAction` function passed to `MainScreen`.
+    *   **Message Creation:** `onAction` (which is `startP2PBridgeService` in `MainActivity.kt`) is called with `BridgeAction.BroadcastCommand("display", folderName)`.
     *   **Class:** `info.benjaminhill.localmesh.ui.MainScreen`
     *   **Message Type:** `info.benjaminhill.localmesh.mesh.BridgeAction.BroadcastCommand`
 
@@ -31,12 +30,12 @@ Here is the detailed flow with specific classes, methods, and message types:
     *   **Extras:** The "display" command and the selected folder name are added as extras to the `Intent` under the keys `BridgeService.EXTRA_COMMAND` and `BridgeService.EXTRA_PAYLOAD`.
     *   **Class:** `info.benjaminhill.localmesh.MainActivity`
 
-3.  **`BridgeService` (P2P Broadcasting) - THE GAP**
+3.  **`BridgeService` (P2P Broadcasting)**
     *   **Action:** The `BridgeService` receives the `Intent` in its `onStartCommand` method.
-    *   **GAP:** The `when` statement in `onStartCommand` **only** checks for `BridgeAction.Start` and `BridgeAction.Stop`. It does not have a case to handle `BridgeAction.BroadcastCommand`.
-    *   **Expected Behavior (The Fix):** The service should have a case for `BroadcastCommand`. It would extract the command and payload from the `Intent`, create an `HttpRequestWrapper`, and broadcast it.
-        *   `val wrapper = HttpRequestWrapper(method = "GET", path = "/$command", params = "path=$payload", sourceNodeId = endpointName)`
-        *   `broadcast(wrapper.toJson())`
+    *   **Handling:** The `when` statement correctly handles the `BridgeAction.BroadcastCommand`.
+    *   **Wrapper Creation:** It extracts the command ("display") and payload ("eye") from the `Intent`, creates an `HttpRequestWrapper`, and serializes it to JSON.
+        *   `val wrapper = HttpRequestWrapper(method = "GET", path = "/display", params = "path=eye", sourceNodeId = endpointName)`
+    *   **Broadcast:** It calls `broadcast(wrapper.toJson())` to send the command to all peers.
     *   **Class:** `info.benjaminhill.localmesh.mesh.BridgeService`
 
 4.  **`NearbyConnectionsManager` (Peer-to-Peer Communication)**
@@ -51,16 +50,17 @@ Here is the detailed flow with specific classes, methods, and message types:
     *   **Dispatch:** It then calls `localHttpServer.dispatchRequest(wrapper)` to process the command locally.
     *   **Class:** `info.benjaminhill.localmesh.mesh.BridgeService`
 
-6.  **Peer: `LocalHttpServer` (Internal HTTP Request)**
-    *   **Action:** `dispatchRequest` makes an HTTP request to its own Ktor server using an `HttpClient`.
-    *   **URL:** The URL is constructed from the wrapper's contents: `http://localhost:8099/display?sourceNodeId=PEER_ID&path=eye`.
+6.  **Peer: `LocalHttpServer` (Internal HTTP Request Dispatch)**
+    *   **Action:** `dispatchRequest` receives the `HttpRequestWrapper`. It parses the `params` string to separate query parameters from body content, using `%%BODY%%` as a delimiter.
+    *   **URL Construction:** It constructs the URL for the local `HttpClient`, ensuring that query parameters are correctly appended. For a `/display` command, the URL will be `http://localhost:8099/display?sourceNodeId=PEER_ID&path=eye`.
+    *   **Request Execution:** It uses an `HttpClient` to make a synthetic request to its own Ktor server.
     *   **Class:** `info.benjaminhill.localmesh.LocalHttpServer`
 
-7.  **Peer: `LocalHttpServer` (Processing the Request)**
-    *   **Routing:** The Ktor server's routing block matches the `GET "/display"` endpoint.
-    *   **Action:** The handler for this route is executed. It extracts the `path` parameter ("eye").
+7.  **Peer: `LocalHttpServer` (Routing and Processing)**
+    *   **Routing:** The Ktor server's routing block matches the `GET "/display"` endpoint. The `p2pBroadcastInterceptor` sees the `sourceNodeId` and allows the request to pass through without re-broadcasting.
+    *   **Action:** The handler for this route is executed. It extracts the `path` parameter ("eye") from the request.
     *   **Intent Creation:** It creates an `Intent` to start the `WebViewActivity`.
-    *   **URL for WebView:** The `Intent` includes the URL to be loaded in the `WebView`, which is `http://localhost:8099/eye`.
+    *   **URL for WebView:** The `Intent` includes the URL to be loaded in the `WebView`, which is `http://localhost:8099/eye/index.html` (or similar, depending on the static file server logic).
     *   **Class:** `info.benjaminhill.localmesh.LocalHttpServer`
 
 8.  **Peer: `WebViewActivity` (Display)**

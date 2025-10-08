@@ -24,19 +24,16 @@ import io.ktor.server.engine.embeddedServer
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.request.httpMethod
 import io.ktor.server.request.path
-import io.ktor.server.request.receiveChannel
 import io.ktor.server.request.receiveMultipart
+import io.ktor.server.request.receiveText
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondOutputStream
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
 import io.ktor.util.AttributeKey
-import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.readRemaining
 import kotlinx.io.readByteArray
-import io.ktor.server.request.receiveText
-
 import java.io.File
 import java.io.IOException
 import java.net.BindException
@@ -72,8 +69,11 @@ class LocalHttpServer(
     // Define the possible broadcast strategies
     private sealed class BroadcastStrategy {
         data object LocalOnly : BroadcastStrategy() // Execute locally, do not broadcast.
-        data object BroadcastAndExecute : BroadcastStrategy() // Broadcast to peers AND execute locally.
-        data object BroadcastOnly : BroadcastStrategy() // Broadcast to peers, DO NOT execute locally.
+        data object BroadcastAndExecute :
+            BroadcastStrategy() // Broadcast to peers AND execute locally.
+
+        data object BroadcastOnly :
+            BroadcastStrategy() // Broadcast to peers, DO NOT execute locally.
         //data object ReplyOnly : BroadcastStrategy() // Reply to sender with the result of the execution.
     }
 
@@ -123,7 +123,7 @@ class LocalHttpServer(
                 val wrapper = HttpRequestWrapper(
                     method = call.request.httpMethod.value,
                     path = path,
-                    params = call.request.queryParameters.formUrlEncode() + if (body.isNotEmpty()) "&$body" else "",
+                    params = call.request.queryParameters.formUrlEncode() + "%%BODY%%" + body,
                     sourceNodeId = service.getEndpointName()
                 )
                 service.broadcast(wrapper.toJson())
@@ -291,15 +291,32 @@ class LocalHttpServer(
             return
         }
 
-        val url = "http://localhost:$PORT${wrapper.path}?sourceNodeId=${wrapper.sourceNodeId}"
+        val (queryParams, bodyContent) = if (wrapper.params.contains("%%BODY%%")) {
+            val parts = wrapper.params.split("%%BODY%%", limit = 2)
+            val qp = parts.getOrElse(0) { "" }
+            val body = parts.getOrElse(1) { "" }
+            qp to body
+        } else {
+            // Backwards compatibility for wrappers created outside the interceptor (e.g. BridgeService)
+            if (HttpMethod.parse(wrapper.method) == HttpMethod.Get) {
+                wrapper.params to ""
+            } else {
+                "" to wrapper.params
+            }
+        }
+
+        val url = if (queryParams.isNotEmpty()) {
+            "http://localhost:$PORT${wrapper.path}?sourceNodeId=${wrapper.sourceNodeId}&$queryParams"
+        } else {
+            "http://localhost:$PORT${wrapper.path}?sourceNodeId=${wrapper.sourceNodeId}"
+        }
+
         logMessageCallback("Dispatching request from ${wrapper.sourceNodeId}: ${wrapper.method} $url")
 
         try {
             val response = httpClient.request(url) {
                 method = HttpMethod.parse(wrapper.method)
-                // The body is now part of the params string
-                if (method == HttpMethod.Post && wrapper.params.isNotEmpty()) {
-                    val bodyContent = wrapper.params.substringAfter('&', "")
+                if (method == HttpMethod.Post && bodyContent.isNotEmpty()) {
                     setBody(TextContent(bodyContent, ContentType.Application.FormUrlEncoded))
                 }
             }

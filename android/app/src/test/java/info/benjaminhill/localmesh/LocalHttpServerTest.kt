@@ -37,7 +37,7 @@ class LocalHttpServerTest {
     }
 
     @Test
-    fun `interceptor broadcasts GET request`():Unit = testApplication {
+    fun `interceptor broadcasts GET request`(): Unit = testApplication {
         application {
             install(localHttpServer.p2pBroadcastInterceptor)
             routing {
@@ -60,7 +60,7 @@ class LocalHttpServerTest {
     }
 
     @Test
-    fun `interceptor broadcasts POST request without query params`():Unit = testApplication {
+    fun `interceptor broadcasts POST request without query params`(): Unit = testApplication {
         application {
             install(localHttpServer.p2pBroadcastInterceptor)
             routing {
@@ -86,7 +86,7 @@ class LocalHttpServerTest {
     }
 
     @Test
-    fun `interceptor broadcasts POST request with query params and body`():Unit = testApplication {
+    fun `interceptor broadcasts POST request with query params and body`(): Unit = testApplication {
         application {
             install(localHttpServer.p2pBroadcastInterceptor)
             routing {
@@ -113,7 +113,7 @@ class LocalHttpServerTest {
 
 
     @Test
-    fun `interceptor ignores request with sourceNodeId`():Unit = testApplication {
+    fun `interceptor ignores request with sourceNodeId`(): Unit = testApplication {
         application {
             install(localHttpServer.p2pBroadcastInterceptor)
             routing {
