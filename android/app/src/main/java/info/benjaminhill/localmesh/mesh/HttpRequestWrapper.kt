@@ -14,10 +14,6 @@ import kotlinx.serialization.json.Json
  * It does not contain the actual response to the HTTP request. It is only for transmitting the
  * request itself.
  *
- * ## Comparison to other classes
- * - **[BridgeAction]:** `HttpRequestWrapper` is for *inter-device* (peer-to-peer) communication,
- *   representing a replicated HTTP call. `BridgeAction` is for *intra-device* (UI-to-Service)
- *   commands.
  */
 @Serializable
 data class HttpRequestWrapper(

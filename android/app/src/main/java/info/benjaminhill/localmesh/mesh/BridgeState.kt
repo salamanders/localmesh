@@ -13,9 +13,6 @@ import kotlinx.serialization.Serializable
  * It does not represent the state of network connections or individual peers. It only reflects the
  * overall state of the local [BridgeService].
  *
- * ## Comparison to other classes
- * - **[BridgeAction]:** `BridgeState` represents the *current status* of the service, while `BridgeAction`
- *   represents a *request* to change that status.
  */
 @Serializable
 sealed class BridgeState {

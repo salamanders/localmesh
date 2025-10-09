@@ -197,7 +197,7 @@ class NearbyConnectionsManager(
         }
     }
 
-    private fun requestConnection(endpointId: String): Unit {
+    private fun requestConnection(endpointId: String) {
         runCatchingWithLogging({ msg, err ->
             logErrorCallback(msg, err ?: Exception(msg))
         }) {

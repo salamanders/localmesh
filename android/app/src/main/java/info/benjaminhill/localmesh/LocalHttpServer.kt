@@ -21,7 +21,6 @@ import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.createApplicationPlugin
 import io.ktor.server.application.install
-import io.ktor.server.cio.CIO as KtorCIO
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.statuspages.StatusPages
@@ -39,6 +38,7 @@ import kotlinx.serialization.Serializable
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import io.ktor.server.cio.CIO as KtorCIO
 
 // Extension function to check if an asset path is a directory
 fun AssetManager.isDirectory(path: String): Boolean {
@@ -123,6 +123,7 @@ class LocalHttpServer(
                     body = body,
                     sourceNodeId = service.endpointName
                 )
+                logMessageCallback("Broadcasting to peers: $wrapper")
                 service.broadcast(wrapper.toJson())
 
                 // Stop the pipeline for this request by responding immediately.

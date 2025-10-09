@@ -1,7 +1,5 @@
 package info.benjaminhill.localmesh.util
 
-import android.util.Log
-
 /**
  * A centralized place for handling exceptions throughout the application.
  */
