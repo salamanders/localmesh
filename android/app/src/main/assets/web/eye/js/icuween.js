@@ -1,13 +1,7 @@
-/* jshint esversion: 8 */
-/* jshint unused:true */
-/* jshint devel: true, browser: true */
-/* global THREE, onWindowResize, lookSomewhere, animate */
-/* globals renderer: true, scene:true, camera:true, image:true,eyeTextures:true, meshEye:true, meshLidRotated:true */
+import * as THREE from './three.module.js';
+import * as TWEEN from './tween.esm.js';
 
-// MatCap-style image rendered on a sphere
-// modify sphere UVs instead of using a ShaderMaterial
-
-let camera, scene, renderer, image, meshEye, meshLidRotated, tween;
+let camera, scene, renderer, meshEye, meshLidRotated;
 
 const getRandomRange = (min, max) => {
     return Math.random() * (max - min) + min;
@@ -15,23 +9,25 @@ const getRandomRange = (min, max) => {
 
 const lookSomewhere = () => {
     // y = side side, +x = down
-    tween = new TWEEN.Tween(meshEye.rotation)
+    new TWEEN.Tween(meshEye.rotation)
         .to({
-            x: THREE.Math.degToRad(getRandomRange(-15,15)),
-            y: THREE.Math.degToRad(getRandomRange(-30,30))
-        }, getRandomRange(10,200))
+            x: THREE.MathUtils.degToRad(getRandomRange(-15, 15)),
+            y: THREE.MathUtils.degToRad(getRandomRange(-30, 30))
+        }, getRandomRange(10, 200))
         .start();
 
-    setTimeout(() => { lookSomewhere(); }, getRandomRange(200, 3000));
+    setTimeout(() => {
+        lookSomewhere();
+    }, getRandomRange(200, 3000));
 };
 
 const onWindowResize = () => {
     camera.aspect = window.innerWidth / window.innerHeight;
-    console.log(`onWindowResize: camera.aspect=${camera.aspect}`)
+    console.log(`onWindowResize: camera.aspect=${camera.aspect}`);
     camera.updateProjectionMatrix();
-    renderer.setSize( window.innerWidth, window.innerHeight );
+    renderer.setSize(window.innerWidth, window.innerHeight);
 };
-window.addEventListener( 'resize', onWindowResize, false );
+window.addEventListener('resize', onWindowResize, false);
 
 const animate = () => {
     requestAnimationFrame(animate);
@@ -49,9 +45,6 @@ const eyeTextures = [
 ];
 
 const init = () => {
-
-
-
     renderer = new THREE.WebGLRenderer();
     renderer.setSize(window.innerWidth, window.innerHeight);
     document.body.appendChild(renderer.domElement);
@@ -67,15 +60,10 @@ const init = () => {
     const light = new THREE.PointLight(0xffffff, 1);
     camera.add(light);
 
-    image = document.createElement('img');
-    const eyeTexture = eyeTextures[Math.floor(Math.random() * eyeTextures.length)];
-    console.log(eyeTexture);
-    image.src = eyeTexture;
+    const eyeTextureUrl = eyeTextures[Math.floor(Math.random() * eyeTextures.length)];
+    console.log(eyeTextureUrl);
 
-    const texture = new THREE.Texture(image);
-    image.addEventListener('load', () => {
-        texture.needsUpdate = true;
-    });
+    const texture = new THREE.TextureLoader().load(eyeTextureUrl);
 
     const material = new THREE.MeshPhongMaterial({
         color: 0xffffff,
@@ -84,17 +72,20 @@ const init = () => {
         map: texture
     });
 
-    // https://threejs.org/docs/#api/geometries/SphereGeometry
     const geometry = new THREE.SphereGeometry(30, 24, 24);
 
-    // modify UVs to accommodate MatCap texture (I don't know what this means)
-    const faceVertexUvs = geometry.faceVertexUvs[0];
-    for (let i = 0; i < faceVertexUvs.length; i++) {
-        for (let j = 0; j < 3; j++) {
-            faceVertexUvs[i][j].x = geometry.faces[i].vertexNormals[j].x * 0.5 + 0.5;
-            faceVertexUvs[i][j].y = geometry.faces[i].vertexNormals[j].y * 0.5 + 0.5;
-        }
+    // The old method of modifying faceVertexUvs is deprecated.
+    // The modern approach for a MatCap is to use MeshMatcapMaterial,
+    // but to preserve the original Phong shading, we can manipulate the UV attribute.
+    const uvs = geometry.attributes.uv.array;
+    const normals = geometry.attributes.normal.array;
+    for (let i = 0; i < uvs.length; i += 2) {
+        const normalIndex = (i / 2) * 3;
+        uvs[i] = normals[normalIndex] * 0.5 + 0.5;
+        uvs[i + 1] = normals[normalIndex + 1] * 0.5 + 0.5;
     }
+    geometry.attributes.uv.needsUpdate = true;
+
 
     meshEye = new THREE.Mesh(geometry, material);
     scene.add(meshEye);
