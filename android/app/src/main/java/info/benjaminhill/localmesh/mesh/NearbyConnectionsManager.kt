@@ -16,6 +16,7 @@ import com.google.android.gms.nearby.connection.Payload
 import com.google.android.gms.nearby.connection.PayloadCallback
 import com.google.android.gms.nearby.connection.PayloadTransferUpdate
 import com.google.android.gms.nearby.connection.Strategy
+import info.benjaminhill.localmesh.util.GlobalExceptionHandler.runCatchingWithLogging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -48,7 +49,8 @@ class NearbyConnectionsManager(
     private val endpointName: String = UUID.randomUUID().toString().substring(0, 4),
     private val peerCountUpdateCallback: (Int) -> Unit,
     private val logMessageCallback: (String) -> Unit,
-    private val payloadReceivedCallback: (endpointId: String, payload: Payload) -> Unit
+    private val logErrorCallback: (String, Throwable) -> Unit,
+    private val payloadReceivedCallback: (endpointId: String, payload: Payload) -> Unit,
 ) {
 
     private val connectionsClient: ConnectionsClient by lazy {
@@ -74,17 +76,16 @@ class NearbyConnectionsManager(
         retryCounts.clear()
     }
 
-    fun sendPayload(endpointIds: List<String>, payload: Payload) {
-        try {
+    fun sendPayload(endpointIds: List<String>, payload: Payload) =
+        runCatchingWithLogging({ msg, err ->
+            logErrorCallback(msg, err ?: Exception(msg))
+        }) {
             logMessageCallback("NearbyConnectionsManager.sendPayload() to ${endpointIds.size} endpoints.")
             connectionsClient.sendPayload(endpointIds, payload)
                 .addOnFailureListener { e ->
-                    logMessageCallback("Failed to send payload ${payload.id}: ${e.message}")
+                    logErrorCallback("Failed to send payload ${payload.id}", e)
                 }
-        } catch (e: Exception) {
-            logMessageCallback("Exception in sendPayload: ${e.message}")
         }
-    }
 
     fun broadcastBytes(payload: ByteArray) {
         sendPayload(connectedEndpoints.toList(), Payload.fromBytes(payload))
@@ -96,53 +97,49 @@ class NearbyConnectionsManager(
     val connectedPeerIds: List<String>
         get() = connectedEndpoints.toList()
 
-    private suspend fun startAdvertising() {
-        try {
-            withContext(Dispatchers.IO) {
-                val advertisingOptions =
-                    AdvertisingOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).build()
-                connectionsClient.startAdvertising(
-                    endpointName,
-                    serviceId,
-                    connectionLifecycleCallback,
-                    advertisingOptions
-                ).addOnSuccessListener {
-                    logMessageCallback("Advertising started.")
-                }.addOnFailureListener { e ->
-                    logMessageCallback("Failed to start advertising: ${e.message}")
-                }
+    private suspend fun startAdvertising() = runCatchingWithLogging({ msg, err ->
+        logErrorCallback(msg, err ?: Exception(msg))
+    }) {
+        withContext(Dispatchers.IO) {
+            val advertisingOptions =
+                AdvertisingOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).build()
+            connectionsClient.startAdvertising(
+                endpointName,
+                serviceId,
+                connectionLifecycleCallback,
+                advertisingOptions
+            ).addOnSuccessListener {
+                logMessageCallback("Advertising started.")
+            }.addOnFailureListener { e ->
+                logErrorCallback("Failed to start advertising", e)
             }
-        } catch (e: Exception) {
-            logMessageCallback("Exception in startAdvertising: ${e.message}")
         }
     }
 
-    private suspend fun startDiscovery() {
-        try {
-            withContext(Dispatchers.IO) {
-                val discoveryOptions =
-                    DiscoveryOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).build()
-                connectionsClient.startDiscovery(
-                    serviceId,
-                    endpointDiscoveryCallback,
-                    discoveryOptions
-                ).addOnSuccessListener {
-                    logMessageCallback("Discovery started.")
-                }.addOnFailureListener { e ->
-                    logMessageCallback("Failed to start discovery: ${e.message}")
-                }
+    private suspend fun startDiscovery() = runCatchingWithLogging({ msg, err ->
+        logErrorCallback(msg, err ?: Exception(msg))
+    }) {
+        withContext(Dispatchers.IO) {
+            val discoveryOptions =
+                DiscoveryOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).build()
+            connectionsClient.startDiscovery(
+                serviceId,
+                endpointDiscoveryCallback,
+                discoveryOptions
+            ).addOnSuccessListener {
+                logMessageCallback("Discovery started.")
+            }.addOnFailureListener { e ->
+                logErrorCallback("Failed to start discovery", e)
             }
-        } catch (e: Exception) {
-            logMessageCallback("Exception in startDiscovery: ${e.message}")
         }
     }
 
     private val payloadCallback = object : PayloadCallback() {
         override fun onPayloadReceived(endpointId: String, payload: Payload) {
-            try {
+            runCatchingWithLogging({ msg, err ->
+                logErrorCallback(msg, err ?: Exception(msg))
+            }) {
                 payloadReceivedCallback(endpointId, payload)
-            } catch (e: Exception) {
-                logMessageCallback("Exception in onPayloadReceived: ${e.message}")
             }
         }
 
@@ -154,14 +151,14 @@ class NearbyConnectionsManager(
     private val connectionLifecycleCallback: ConnectionLifecycleCallback =
         object : ConnectionLifecycleCallback() {
             override fun onConnectionInitiated(endpointId: String, connectionInfo: ConnectionInfo) {
-                logMessageCallback("onConnectionInitiated from ${connectionInfo.endpointName} (id:$endpointId)")
-                try {
+                runCatchingWithLogging({ msg, err ->
+                    logErrorCallback(msg, err ?: Exception(msg))
+                }) {
+                    logMessageCallback("onConnectionInitiated from ${connectionInfo.endpointName} (id:$endpointId)")
                     connectionsClient.acceptConnection(endpointId, payloadCallback)
                         .addOnFailureListener { e ->
-                            logMessageCallback("Failed to accept connection from $endpointId: ${e.message}")
+                            logErrorCallback("Failed to accept connection from $endpointId", e)
                         }
-                } catch (e: Exception) {
-                    logMessageCallback("Exception in onConnectionInitiated: ${e.message}")
                 }
             }
 
@@ -200,8 +197,10 @@ class NearbyConnectionsManager(
         }
     }
 
-    private fun requestConnection(endpointId: String) {
-        try {
+    private fun requestConnection(endpointId: String): Unit {
+        runCatchingWithLogging({ msg, err ->
+            logErrorCallback(msg, err ?: Exception(msg))
+        }) {
             connectionsClient.requestConnection(
                 endpointName,
                 endpointId,
@@ -213,15 +212,16 @@ class NearbyConnectionsManager(
                 }
                 .addOnFailureListener { e ->
                     val statusCode = (e as? ApiException)?.statusCode
-                    logMessageCallback("Failed to request connection to $endpointId: ${e.message} (code: $statusCode)")
+                    logErrorCallback(
+                        "Failed to request connection to $endpointId (code: $statusCode)",
+                        e
+                    )
                     if (statusCode == ConnectionsStatusCodes.STATUS_ENDPOINT_IO_ERROR) {
                         scheduleRetry(endpointId, "initial request") {
                             requestConnection(endpointId)
                         }
                     }
                 }
-        } catch (e: Exception) {
-            logMessageCallback("Exception in requestConnection: ${e.message}")
         }
     }
 

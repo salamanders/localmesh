@@ -2,9 +2,9 @@ package info.benjaminhill.localmesh
 
 import android.content.Intent
 import android.content.res.AssetManager
-import android.util.Log
 import info.benjaminhill.localmesh.mesh.BridgeService
 import info.benjaminhill.localmesh.mesh.HttpRequestWrapper
+import info.benjaminhill.localmesh.util.GlobalExceptionHandler.runCatchingWithLogging
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.request.request
@@ -18,10 +18,13 @@ import io.ktor.http.content.forEachPart
 import io.ktor.http.formUrlEncode
 import io.ktor.http.fromFileExtension
 import io.ktor.serialization.kotlinx.json.json
+import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.createApplicationPlugin
 import io.ktor.server.application.install
+import io.ktor.server.cio.CIO as KtorCIO
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.request.httpMethod
 import io.ktor.server.request.path
 import io.ktor.server.request.receiveMultipart
@@ -36,8 +39,6 @@ import kotlinx.serialization.Serializable
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
-import java.net.BindException
-import io.ktor.server.cio.CIO as KtorCIO
 
 // Extension function to check if an asset path is a directory
 fun AssetManager.isDirectory(path: String): Boolean {
@@ -82,7 +83,8 @@ data class StatusResponse(
 
 class LocalHttpServer(
     private val service: BridgeService,
-    private val logMessageCallback: (String) -> Unit
+    private val logMessageCallback: (String) -> Unit,
+    private val logErrorCallback: (String, Throwable) -> Unit,
 ) {
 
     private val httpClient = HttpClient(CIO)
@@ -134,21 +136,23 @@ class LocalHttpServer(
             json()
         }
         install(p2pBroadcastInterceptor)
+        install(StatusPages) {
+            exception<Throwable> { call: ApplicationCall, cause ->
+                logErrorCallback("Unhandled Ktor error on ${call.request.path()}", cause)
+                call.respond(
+                    HttpStatusCode.InternalServerError,
+                    "Internal Server Error: ${cause.message ?: "Unknown error"}"
+                )
+            }
+        }
 
         routing {
             get("/folders") {
-                try {
-                    val assetList = service.applicationContext.assets.list("web")
-                        ?.filter { assetName ->
-                            service.applicationContext.assets.isDirectory("web/$assetName")
-                        } ?: emptyList()
-                    call.respond(assetList)
-                } catch (e: IOException) {
-                    call.respond(
-                        HttpStatusCode.InternalServerError,
-                        "Error listing asset folders: ${e.message}"
-                    )
-                }
+                val assetList = service.applicationContext.assets.list("web")
+                    ?.filter { assetName ->
+                        service.applicationContext.assets.isDirectory("web/$assetName")
+                    } ?: emptyList()
+                call.respond(assetList)
             }
             get("/status") {
                 // A simple report of the service's status and number of peers
@@ -253,36 +257,26 @@ class LocalHttpServer(
                     path = "index.html" // Default to index.html for root
                 }
                 val assetPath = "web/$path"
-                try {
-                    service.applicationContext.assets.open(assetPath).use { inputStream ->
-                        val contentType = ContentType.fromFileExtension(path).firstOrNull()
-                            ?: ContentType.Application.OctetStream
-                        call.respondOutputStream(contentType) {
-                            inputStream.copyTo(this)
-                        }
+                // Let StatusPages handle the IOException for not found
+                service.applicationContext.assets.open(assetPath).use { inputStream ->
+                    val contentType = ContentType.fromFileExtension(path).firstOrNull()
+                        ?: ContentType.Application.OctetStream
+                    call.respondOutputStream(contentType) {
+                        inputStream.copyTo(this)
                     }
-                } catch (_: IOException) {
-                    call.respond(HttpStatusCode.NotFound, "File not found: $assetPath")
                 }
             }
         }
     }
 
-    fun start(): Boolean {
-        try {
-            logMessageCallback("Attempting to start LocalHttpServer...")
-            server.start(wait = false)
-            logMessageCallback("LocalHttpServer started successfully on port $PORT.")
-            return true
-        } catch (_: BindException) {
-            logMessageCallback("Port $PORT is already in use. Please close the other application and restart the service.")
-            return false
-        } catch (e: Exception) {
-            logMessageCallback("An unexpected error occurred while starting the LocalHttpServer: ${e.message}")
-            Log.e("LocalHttpServer", "Start failed", e)
-            return false
-        }
-    }
+    fun start(): Boolean = runCatchingWithLogging({ msg, err ->
+        logErrorCallback(msg, err ?: Exception(msg))
+    }) {
+        logMessageCallback("Attempting to start LocalHttpServer...")
+        server.start(wait = false)
+        logMessageCallback("LocalHttpServer started successfully on port $PORT.")
+        true
+    } ?: false
 
     fun stop() {
         server.stop(1000, 1000)
@@ -292,22 +286,24 @@ class LocalHttpServer(
     /**
      * Receives a request from a peer and dispatches it to the local Ktor server.
      */
-    suspend fun dispatchRequest(wrapper: HttpRequestWrapper) {
-        // Prevent re-dispatching a request that originated from this node
-        if (wrapper.sourceNodeId == service.endpointName) {
-            logMessageCallback("Not dispatching own request: ${wrapper.path}")
-            return
-        }
+    suspend fun dispatchRequest(wrapper: HttpRequestWrapper) =
+        runCatchingWithLogging({ msg, err ->
+            logErrorCallback(msg, err ?: Exception(msg))
+        }) {
+            // Prevent re-dispatching a request that originated from this node
+            if (wrapper.sourceNodeId == service.endpointName) {
+                logMessageCallback("Not dispatching own request: ${wrapper.path}")
+                return@runCatchingWithLogging
+            }
 
-        val url = if (wrapper.queryParams.isNotEmpty()) {
-            "http://localhost:$PORT${wrapper.path}?sourceNodeId=${wrapper.sourceNodeId}&${wrapper.queryParams}"
-        } else {
-            "http://localhost:$PORT${wrapper.path}?sourceNodeId=${wrapper.sourceNodeId}"
-        }
+            val url = if (wrapper.queryParams.isNotEmpty()) {
+                "http://localhost:$PORT${wrapper.path}?sourceNodeId=${wrapper.sourceNodeId}&${wrapper.queryParams}"
+            } else {
+                "http://localhost:$PORT${wrapper.path}?sourceNodeId=${wrapper.sourceNodeId}"
+            }
 
-        logMessageCallback("Dispatching request from ${wrapper.sourceNodeId}: ${wrapper.method} $url")
+            logMessageCallback("Dispatching request from ${wrapper.sourceNodeId}: ${wrapper.method} $url")
 
-        try {
             val response = httpClient.request(url) {
                 method = HttpMethod.parse(wrapper.method)
                 if (method == HttpMethod.Post && wrapper.body.isNotEmpty()) {
@@ -315,11 +311,7 @@ class LocalHttpServer(
                 }
             }
             logMessageCallback("Dispatched request '${wrapper.path}' from '${wrapper.sourceNodeId}' completed with status: ${response.status}")
-        } catch (e: Exception) {
-            logMessageCallback("Error dispatching request from '${wrapper.sourceNodeId}': ${e.message}")
-            Log.e("LocalHttpServer", "Dispatch failed", e)
         }
-    }
 
     companion object {
         const val PORT = 8099
