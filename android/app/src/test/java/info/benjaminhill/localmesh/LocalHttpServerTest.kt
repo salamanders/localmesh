@@ -33,7 +33,8 @@ class LocalHttpServerTest {
     fun setUp() {
         mockBridgeService = mock()
         whenever(mockBridgeService.endpointName).thenReturn("test-node")
-        localHttpServer = LocalHttpServer(mockBridgeService) { /* No-op logger */ }
+        localHttpServer =
+            LocalHttpServer(mockBridgeService, { /* No-op logger */ }, { _, _ -> /* No-op err */ })
     }
 
     @Test

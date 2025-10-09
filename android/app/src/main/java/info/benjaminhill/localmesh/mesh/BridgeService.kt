@@ -18,6 +18,7 @@ import info.benjaminhill.localmesh.LocalHttpServer
 import info.benjaminhill.localmesh.LogFileWriter
 import info.benjaminhill.localmesh.MainActivity
 import info.benjaminhill.localmesh.R
+import info.benjaminhill.localmesh.util.GlobalExceptionHandler.runCatchingWithLogging
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -63,64 +64,60 @@ class BridgeService : Service() {
     override fun onCreate() {
         super.onCreate()
         Log.i(TAG, "onCreate() called")
-        try {
+        runCatchingWithLogging(::logError) {
             endpointName =
                 (('A'..'Z') + ('a'..'z') + ('0'..'9')).shuffled().take(5).joinToString("")
             logFileWriter = LogFileWriter(applicationContext)
             if (!::localHttpServer.isInitialized) {
-                localHttpServer = LocalHttpServer(this, ::sendLogMessage)
+                localHttpServer = LocalHttpServer(this, ::sendLogMessage, ::logError)
             }
             if (!::nearbyConnectionsManager.isInitialized) {
                 nearbyConnectionsManager = NearbyConnectionsManager(
                     context = this,
                     endpointName = endpointName,
                     peerCountUpdateCallback = { /* No-op, web UI will poll /status */ },
-                    logMessageCallback = ::sendLogMessage
+                    logMessageCallback = ::sendLogMessage,
+                    logErrorCallback = ::logError
                 ) { _, payload ->
-                    try {
-                        when (payload.type) {
-                            Payload.Type.BYTES -> handleBytesPayload(payload)
-                            Payload.Type.STREAM -> handleStreamPayload(payload)
-                            else -> sendLogMessage("Received unsupported payload type: ${payload.type}")
-                        }
-                    } catch (e: Exception) {
-                        sendLogMessage("Failed to process payload: ${e.message}")
+                    when (payload.type) {
+                        Payload.Type.BYTES -> handleBytesPayload(payload)
+                        Payload.Type.STREAM -> handleStreamPayload(payload)
+                        else -> sendLogMessage("Received unsupported payload type: ${payload.type}")
                     }
                 }
             }
             Log.i(TAG, "onCreate() finished successfully")
-        } catch (e: Exception) {
-            Log.e(TAG, "onCreate: CRASHED: ${e.message}", e)
-            sendLogMessage("FATAL: Service crashed on create: ${e.message}")
+        } ?: run {
+            sendLogMessage("FATAL: Service crashed on create.")
             currentState = BridgeState.Error("onCreate failed")
         }
     }
 
     internal fun handleBytesPayload(payload: Payload) {
-        val jsonString = payload.asBytes()!!.toString(Charsets.UTF_8)
-        val wrapper = HttpRequestWrapper.fromJson(jsonString)
-        CoroutineScope(ioDispatcher).launch {
-            localHttpServer.dispatchRequest(wrapper)
+        runCatchingWithLogging(::logError) {
+            val jsonString = payload.asBytes()!!.toString(Charsets.UTF_8)
+            val wrapper = HttpRequestWrapper.fromJson(jsonString)
+            CoroutineScope(ioDispatcher).launch {
+                localHttpServer.dispatchRequest(wrapper)
+            }
         }
     }
 
     internal fun handleStreamPayload(payload: Payload) {
         val filename = incomingFilePayloads.remove(payload.id)
-        if (filename != null) {
-            try {
-                val cacheDir = File(applicationContext.cacheDir, "web_cache").also { it.mkdirs() }
-                val file = File(cacheDir, filename)
-                payload.asStream()?.asInputStream()?.use { inputStream ->
-                    file.outputStream().use { outputStream ->
-                        inputStream.copyTo(outputStream)
-                    }
-                }
-                sendLogMessage("File received and cached: $filename")
-            } catch (e: Exception) {
-                sendLogMessage("Error receiving file '$filename': ${e.message}")
-            }
-        } else {
+        if (filename == null) {
             sendLogMessage("Received stream payload with unknown ID: ${payload.id}")
+            return
+        }
+        runCatchingWithLogging(::logError) {
+            val cacheDir = File(applicationContext.cacheDir, "web_cache").also { it.mkdirs() }
+            val file = File(cacheDir, filename)
+            payload.asStream()?.asInputStream()?.use { inputStream ->
+                file.outputStream().use { outputStream ->
+                    inputStream.copyTo(outputStream)
+                }
+            }
+            sendLogMessage("File received and cached: $filename")
         }
     }
 
@@ -268,6 +265,16 @@ class BridgeService : Service() {
     fun sendLogMessage(message: String) {
         Log.d(TAG, message)
         logFileWriter.writeLog(message)
+    }
+
+    private fun logError(message: String, throwable: Throwable?) {
+        if (throwable != null) {
+            Log.e(TAG, message, throwable)
+            logFileWriter.writeLog("ERROR: $message, ${throwable.message}")
+        } else {
+            Log.e(TAG, message)
+            logFileWriter.writeLog("ERROR: $message")
+        }
     }
 
     companion object {
