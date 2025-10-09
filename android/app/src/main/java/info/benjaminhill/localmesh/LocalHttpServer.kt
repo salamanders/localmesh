@@ -25,20 +25,18 @@ import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.request.httpMethod
 import io.ktor.server.request.path
 import io.ktor.server.request.receiveMultipart
-import io.ktor.server.request.receiveText
+import io.ktor.server.request.receiveParameters
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondOutputStream
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
-import io.ktor.util.AttributeKey
-import io.ktor.utils.io.readRemaining
-import kotlinx.io.readByteArray
+import io.ktor.utils.io.jvm.javaio.toInputStream
 import kotlinx.serialization.Serializable
 import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 import java.net.BindException
-import java.net.URLDecoder
 import io.ktor.server.cio.CIO as KtorCIO
 
 // Extension function to check if an asset path is a directory
@@ -108,11 +106,9 @@ class LocalHttpServer(
                 }
 
                 // --- Step 2: Broadcast the request and stop local execution ---
-
-                // For POST requests, we need to read the body to broadcast it.
-                // We stop local execution, so we don't need to cache the body for later.
+                val queryParams = call.request.queryParameters.formUrlEncode()
                 val body: String = if (call.request.httpMethod == HttpMethod.Post) {
-                    call.receiveText()
+                    call.receiveParameters().formUrlEncode()
                 } else {
                     ""
                 }
@@ -121,7 +117,7 @@ class LocalHttpServer(
                 val wrapper = HttpRequestWrapper(
                     method = call.request.httpMethod.value,
                     path = path,
-                    queryParams = call.request.queryParameters.formUrlEncode(),
+                    queryParams = queryParams,
                     body = body,
                     sourceNodeId = service.endpointName
                 )
@@ -167,9 +163,8 @@ class LocalHttpServer(
             }
 
             post("/chat") {
-                val body = call.attributes[RequestBodyAttribute]
-                val message =
-                    URLDecoder.decode(body, Charsets.UTF_8.name()).substringAfter("message=")
+                val params = call.receiveParameters()
+                val message = params["message"] ?: "[empty]"
                 val source = call.request.queryParameters["sourceNodeId"] ?: "local"
                 logMessageCallback("Chat from $source: $message")
                 call.respond(mapOf("status" to HttpStatusCode.OK))
@@ -213,13 +208,14 @@ class LocalHttpServer(
                 multipart.forEachPart { part ->
                     if (part is PartData.FileItem) {
                         val originalFileName = part.originalFileName ?: "unknown.bin"
-                        // The `readByteArray()` function from `kotlinx.io` is required here.
-                        val fileBytes = part.provider().readRemaining().readByteArray()
                         val tempFile = File(
                             service.cacheDir,
                             "upload_temp_${System.currentTimeMillis()}_$originalFileName"
-                        ).apply {
-                            writeBytes(fileBytes)
+                        )
+                        part.provider().toInputStream().use { its ->
+                            FileOutputStream(tempFile).use { fos ->
+                                its.copyTo(fos)
+                            }
                         }
                         // Use the BridgeService to send the file via a STREAM payload
                         service.sendFile(tempFile)
@@ -244,9 +240,8 @@ class LocalHttpServer(
 
             // This is a notification endpoint, not for data transfer
             post("/file-received") {
-                val params = call.attributes[RequestBodyAttribute]
-                val decodedParams = URLDecoder.decode(params, Charsets.UTF_8.name())
-                val filename = decodedParams.substringAfter("filename=").substringBefore("&")
+                val params = call.receiveParameters()
+                val filename = params["filename"] ?: "unknown"
                 val source = call.request.queryParameters["sourceNodeId"] ?: "local"
                 logMessageCallback("Notification: File '$filename' was successfully received from $source.")
                 call.respond(mapOf("status" to HttpStatusCode.OK))
@@ -328,8 +323,5 @@ class LocalHttpServer(
 
     companion object {
         const val PORT = 8099
-
-        // Attribute to cache the request body
-        val RequestBodyAttribute = AttributeKey<String>("RequestBodyAttribute")
     }
 }

@@ -45,7 +45,8 @@ class BridgeServiceTest {
         val wrapper = HttpRequestWrapper(
             method = "GET",
             path = "/test",
-            params = "foo=bar",
+            queryParams = "foo=bar",
+            body = "",
             sourceNodeId = "remote-node"
         )
         val jsonString = wrapper.toJson()

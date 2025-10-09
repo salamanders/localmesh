@@ -10,7 +10,8 @@ class HttpRequestWrapperTest {
         val originalWrapper = HttpRequestWrapper(
             method = "POST",
             path = "/chat",
-            params = "message=hello",
+            queryParams = "",
+            body = "message=hello",
             sourceNodeId = "test-node-123"
         )
 

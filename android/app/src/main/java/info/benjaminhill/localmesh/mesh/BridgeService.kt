@@ -51,8 +51,8 @@ class BridgeService : Service() {
 
     internal lateinit var nearbyConnectionsManager: NearbyConnectionsManager
     internal lateinit var localHttpServer: LocalHttpServer
-     lateinit var endpointName: String
-         internal set
+    lateinit var endpointName: String
+        internal set
 
     private var wakeLock: PowerManager.WakeLock? = null
     internal lateinit var logFileWriter: LogFileWriter
