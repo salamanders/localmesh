@@ -19,6 +19,7 @@ import info.benjaminhill.localmesh.LogFileWriter
 import info.benjaminhill.localmesh.MainActivity
 import info.benjaminhill.localmesh.R
 import info.benjaminhill.localmesh.util.GlobalExceptionHandler.runCatchingWithLogging
+import io.ktor.http.parseUrlEncodedParameters
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -97,6 +98,18 @@ class BridgeService : Service() {
         runCatchingWithLogging(::logError) {
             val jsonString = payload.asBytes()!!.toString(Charsets.UTF_8)
             val wrapper = HttpRequestWrapper.fromJson(jsonString)
+
+            // If this is a file broadcast, store the mapping of payloadId to filename
+            if (wrapper.path == "/send-file") {
+                val params = wrapper.queryParams.parseUrlEncodedParameters()
+                val filename = params["filename"]
+                val payloadId = params["payloadId"]?.toLongOrNull()
+                if (filename != null && payloadId != null) {
+                    incomingFilePayloads[payloadId] = filename
+                    sendLogMessage("Expecting file '$filename' for payload $payloadId")
+                }
+            }
+
             CoroutineScope(ioDispatcher).launch {
                 localHttpServer.dispatchRequest(wrapper)
             }
@@ -143,7 +156,7 @@ class BridgeService : Service() {
         val streamPayload = Payload.fromStream(file.inputStream())
         val wrapper = HttpRequestWrapper(
             method = "POST",
-            path = "/file-received",
+            path = "/send-file",
             queryParams = "filename=${file.name}&payloadId=${streamPayload.id}",
             body = "",
             sourceNodeId = endpointName

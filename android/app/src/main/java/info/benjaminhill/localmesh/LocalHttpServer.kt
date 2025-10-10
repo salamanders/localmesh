@@ -127,7 +127,8 @@ class LocalHttpServer(
                 service.broadcast(wrapper.toJson())
 
                 // Stop the pipeline for this request by responding immediately.
-                // This prevents the controller from executing the command itself.
+                // This prevents the controller from executing the command on the originating device,
+                // which is the desired behavior for broadcast-only commands like /display.
                 call.respond(HttpStatusCode.OK, "Request broadcasted to peers.")
             }
         }
@@ -202,7 +203,8 @@ class LocalHttpServer(
                     // This call came from a peer, so the file is already being handled by the STREAM payload.
                     // We just log it.
                     val filename = call.request.queryParameters["filename"] ?: "unknown"
-                    logMessageCallback("Received file request for '$filename' from peer '$sourceNodeId'. Awaiting stream.")
+                    val payloadId = call.request.queryParameters["payloadId"] ?: "unknown"
+                    logMessageCallback("Received file request for '$filename' (payloadId: $payloadId) from peer '$sourceNodeId'. Awaiting stream.")
                     call.respond(HttpStatusCode.OK, "File request acknowledged from peer.")
                     return@post
                 }
@@ -257,6 +259,19 @@ class LocalHttpServer(
                 if (path.isBlank() || path == "/") {
                     path = "index.html" // Default to index.html for root
                 }
+
+                val cacheDir = File(service.applicationContext.cacheDir, "web_cache")
+                val cachedFile = File(cacheDir, path)
+
+                if (cachedFile.exists() && cachedFile.isFile) {
+                    val contentType = ContentType.fromFileExtension(path).firstOrNull()
+                        ?: ContentType.Application.OctetStream
+                    call.respondOutputStream(contentType) {
+                        cachedFile.inputStream().copyTo(this)
+                    }
+                    return@get
+                }
+
                 val assetPath = "web/$path"
                 // Let StatusPages handle the IOException for not found
                 service.applicationContext.assets.open(assetPath).use { inputStream ->
