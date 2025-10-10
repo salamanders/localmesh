@@ -29,7 +29,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.LocalMesh">
         <activity
-            android:name="info.benjaminhill.localmesh.MainActivity"
+            android:name=".MainActivity"
             android:exported="true"
             android:theme="@style/Theme.LocalMesh">
             <intent-filter>
@@ -41,8 +41,9 @@
             android:name=".mesh.BridgeService"
             android:foregroundServiceType="connectedDevice" />
         <activity
-            android:name=".WebViewActivity"
+            android:name=".DisplayActivity"
             android:hardwareAccelerated="true"
+            android:launchMode="singleTop"
             android:theme="@style/Theme.LocalMesh" />
     </application>
 

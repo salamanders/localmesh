@@ -22,7 +22,7 @@ import info.benjaminhill.localmesh.mesh.BridgeService
  * ## What it does
  * - Displays a single "Start Service" button.
  * - Requests all necessary permissions (Bluetooth, Location, etc.).
- * - Once permissions are granted, it starts the [BridgeService] and launches the [WebViewActivity].
+ * - Once permissions are granted, it starts the [BridgeService].
  * - Finishes itself so the user cannot navigate back to it.
  */
 class MainActivity : ComponentActivity() {
@@ -74,11 +74,9 @@ class MainActivity : ComponentActivity() {
             startService(it)
         }
 
-        // Launch the web view
-        Intent(this, WebViewActivity::class.java).apply {
-            // The URL will be the root of the local server.
-            // The web UI will fetch its own data.
-            putExtra(WebViewActivity.EXTRA_URL, "http://localhost:${LocalHttpServer.PORT}")
+        // Launch the display activity
+        Intent(this, DisplayActivity::class.java).apply {
+            putExtra(DisplayActivity.EXTRA_PATH, "index.html")
         }.also {
             startActivity(it)
         }

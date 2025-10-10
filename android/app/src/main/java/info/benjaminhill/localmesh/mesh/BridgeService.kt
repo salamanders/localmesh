@@ -125,6 +125,7 @@ class BridgeService : Service() {
         runCatchingWithLogging(::logError) {
             val cacheDir = File(applicationContext.cacheDir, "web_cache").also { it.mkdirs() }
             val file = File(cacheDir, filename)
+            file.parentFile?.mkdirs()
             payload.asStream()?.asInputStream()?.use { inputStream ->
                 file.outputStream().use { outputStream ->
                     inputStream.copyTo(outputStream)
@@ -152,12 +153,12 @@ class BridgeService : Service() {
         nearbyConnectionsManager.broadcastBytes(jsonString.toByteArray(Charsets.UTF_8))
     }
 
-    fun sendFile(file: File) {
+    fun sendFile(file: File, destinationPath: String) {
         val streamPayload = Payload.fromStream(file.inputStream())
         val wrapper = HttpRequestWrapper(
             method = "POST",
             path = "/send-file",
-            queryParams = "filename=${file.name}&payloadId=${streamPayload.id}",
+            queryParams = "filename=$destinationPath&payloadId=${streamPayload.id}",
             body = "",
             sourceNodeId = endpointName
         )

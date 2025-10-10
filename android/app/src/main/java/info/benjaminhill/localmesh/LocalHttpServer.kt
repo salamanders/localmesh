@@ -182,16 +182,18 @@ class LocalHttpServer(
                     call.respond(HttpStatusCode.BadRequest, "Missing path parameter")
                     return@get
                 }
-                Intent(service.applicationContext, WebViewActivity::class.java).apply {
-                    putExtra(WebViewActivity.EXTRA_URL, "http://localhost:$PORT/$path")
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                }.also {
-                    service.startActivity(it)
+
+                val intent = Intent(service.applicationContext, DisplayActivity::class.java).apply {
+                    putExtra(DisplayActivity.EXTRA_PATH, path)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
                 }
+
+                service.startActivity(intent)
+
                 call.respond(
                     mapOf(
                         "status" to HttpStatusCode.OK,
-                        "url" to "http://localhost:$PORT/$path"
+                        "launched" to (intent.component?.className ?: "unknown")
                     )
                 )
             }
@@ -214,10 +216,15 @@ class LocalHttpServer(
                 var responseSent = false
                 multipart.forEachPart { part ->
                     if (part is PartData.FileItem) {
-                        val originalFileName = part.originalFileName ?: "unknown.bin"
+                        val destinationPath = part.originalFileName ?: "unknown.bin"
                         val tempFile = File(
                             service.cacheDir,
-                            "upload_temp_${System.currentTimeMillis()}_$originalFileName"
+                            "upload_temp_${System.currentTimeMillis()}_${
+                                destinationPath.replace(
+                                    '/',
+                                    '_'
+                                )
+                            }"
                         )
                         part.provider().toInputStream().use { its ->
                             FileOutputStream(tempFile).use { fos ->
@@ -225,13 +232,13 @@ class LocalHttpServer(
                             }
                         }
                         // Use the BridgeService to send the file via a STREAM payload
-                        service.sendFile(tempFile)
+                        service.sendFile(tempFile, destinationPath)
                         responseSent = true
                         call.respond(
                             mapOf(
                                 "status" to HttpStatusCode.OK,
                                 "file_status" to "file sending initiated",
-                                "filename" to originalFileName
+                                "filename" to destinationPath
                             )
                         )
                     }
