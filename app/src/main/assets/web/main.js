@@ -6,11 +6,31 @@ const foldersList = document.getElementById('folders');
 const noPeersLi = document.getElementById('no-peers');
 
 // These files are part of the base UI and not actual content folders.
-const FOLDER_BLACKLIST = ['favicon.ico', 'index.html'];
+const FOLDER_BLACKLIST = ['favicon.ico', 'index.html', 'main.js'];
+
+/**
+ * A centralized fetch wrapper that adds a spoofed sourceNodeId if the
+ * input box is filled out.
+ * @param {string} path - The request path (e.g., '/status').
+ * @param {RequestInit} options - The options for the fetch call.
+ * @returns {Promise<Response>}
+ */
+function sendRequest(path, options = {}) {
+    const sourceNodeIdInput = document.getElementById('sourceNodeIdInput');
+    let finalPath = path;
+
+    if (sourceNodeIdInput && sourceNodeIdInput.value) {
+        const separator = finalPath.includes('?') ? '&' : '?';
+        finalPath += `${separator}sourceNodeId=${encodeURIComponent(sourceNodeIdInput.value)}`;
+    }
+    console.log(`Sending request to: ${finalPath}`);
+    return fetch(finalPath, options);
+}
+
 
 async function updateStatus() {
     try {
-        const response = await fetch('/status');
+        const response = await sendRequest('/status');
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         const data = await response.json();
 
@@ -26,7 +46,10 @@ async function updateStatus() {
             // Remove peers that are no longer connected
             for (const id of currentPeerIds) {
                 if (!newPeerIds.includes(id)) {
-                    peersList.querySelector(`[data-peer-id="${id}"]`).remove();
+                    const peerElement = peersList.querySelector(`[data-peer-id="${id}"]`);
+                    if (peerElement) {
+                        peerElement.remove();
+                    }
                 }
             }
             // Add new peers
@@ -51,8 +74,8 @@ async function updateStatus() {
 
 async function fetchFolders() {
     try {
-        const response = await fetch('/folders');
-         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        const response = await sendRequest('/folders');
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         const data = await response.json();
         const contentFolders = data.filter(item => !FOLDER_BLACKLIST.includes(item));
 
@@ -68,8 +91,10 @@ async function fetchFolders() {
 }
 
 function displayFolder(folderName) {
+    console.log(`displayFolder called with: ${folderName}`);
     // We don't care about the response, just that the request is sent.
-    fetch(`/display?path=${folderName}`).catch(e => console.error('Failed to send display command:', e));
+    sendRequest(`/display?path=${folderName}`, {method: 'GET'})
+        .catch(e => console.error('Failed to send display command:', e));
 }
 
 // Initial fetch and then poll every 3 seconds

@@ -173,7 +173,7 @@ class LocalHttpServer(
                 val message = params["message"] ?: "[empty]"
                 val source = call.request.queryParameters["sourceNodeId"] ?: "local"
                 logMessageCallback("Chat from $source: $message")
-                call.respond(mapOf("status" to HttpStatusCode.OK))
+                call.respond(mapOf("status" to "OK"))
             }
 
             get("/display") {
@@ -192,7 +192,7 @@ class LocalHttpServer(
 
                 call.respond(
                     mapOf(
-                        "status" to HttpStatusCode.OK,
+                        "status" to "OK",
                         "launched" to (intent.component?.className ?: "unknown")
                     )
                 )
@@ -279,10 +279,18 @@ class LocalHttpServer(
                     return@get
                 }
 
-                val assetPath = "web/$path"
+                var assetPath = "web/$path"
+                logMessageCallback("Checking if '$assetPath' is a directory.")
+                val isDir = service.applicationContext.assets.isDirectory(assetPath)
+                logMessageCallback("'$assetPath' is directory: $isDir")
+                if (isDir) {
+                    assetPath = "$assetPath/index.html"
+                    logMessageCallback("Updated assetPath to '$assetPath'")
+                }
+
                 // Let StatusPages handle the IOException for not found
                 service.applicationContext.assets.open(assetPath).use { inputStream ->
-                    val contentType = ContentType.fromFileExtension(path).firstOrNull()
+                    val contentType = ContentType.fromFileExtension(assetPath).firstOrNull()
                         ?: ContentType.Application.OctetStream
                     call.respondOutputStream(contentType) {
                         inputStream.copyTo(this)

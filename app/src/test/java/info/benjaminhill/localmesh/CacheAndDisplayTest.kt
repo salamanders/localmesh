@@ -7,10 +7,11 @@ import com.google.android.gms.nearby.connection.Payload
 import info.benjaminhill.localmesh.mesh.BridgeService
 import info.benjaminhill.localmesh.mesh.HttpRequestWrapper
 import info.benjaminhill.localmesh.mesh.NearbyConnectionsManager
-import io.ktor.client.*
-import io.ktor.client.engine.cio.*
-import io.ktor.client.request.*
-import io.ktor.client.statement.*
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.cio.CIO
+import io.ktor.client.request.get
+import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsText
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -107,7 +108,11 @@ class CacheAndDisplayTest {
             client.get("http://localhost:${LocalHttpServer.PORT}/test/index.html")
         val responseBody = response.bodyAsText()
 
-        assertEquals("HTTP response body did not match the file content.", tempFileToSend.readText(), responseBody)
+        assertEquals(
+            "HTTP response body did not match the file content.",
+            tempFileToSend.readText(),
+            responseBody
+        )
         client.close()
     }
 }

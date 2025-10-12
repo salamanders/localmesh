@@ -103,3 +103,52 @@ The Ktor server in `LocalHttpServer.kt` defines the following routes:
 
 *   When modeling data for transfer, prefer explicit fields over combined ones using special separators. This improves clarity and maintainability by reducing the need for custom parsing logic.
 *   Before refactoring a shared class or data structure (e.g., `HttpRequestWrapper`), perform a global search for its name to identify all usages across the project. This ensures all dependent files (`LocalHttpServer`, `BridgeService`, tests, etc.) are updated simultaneously, preventing build failures.
+
+## Integration Testing from the Command Line
+
+It is possible to test the full end-to-end flow of the application—from receiving a peer request to displaying a custom WebView—directly from the command line using a combination of `adb` and `curl`. This is useful for verifying the behavior of the `LocalHttpServer` and `DisplayActivity` without needing to manually interact with the UI.
+
+The key is to simulate a request coming from another peer by including the `sourceNodeId` query parameter.
+
+### Test Workflow
+
+1.  **Build and Install the App:**
+    Ensure the latest version is built and installed on the target device or emulator.
+    ```bash
+    # From the android/ directory
+    ./gradlew assembleDebug
+    adb install -r app/build/outputs/apk/debug/app-debug.apk
+    ```
+
+2.  **Start the BridgeService:**
+    The `LocalHttpServer` is started by the `BridgeService`. Manually start the service from the shell. This is the equivalent of the user tapping "Start Service" in the UI.
+    ```bash
+    adb shell am start-service info.benjaminhill.localmesh/.mesh.BridgeService
+    ```
+
+3.  **Forward the Device Port:**
+    To allow your host machine to send requests to the app's server, forward the device's port `8099` to your local machine.
+    ```bash
+    adb forward tcp:8099 tcp:8099
+    ```
+
+4.  **Trigger a Display Change:**
+    Use `curl` to send a `GET` request to the `/display` endpoint. **Crucially**, you must include a `sourceNodeId` to simulate the request coming from a peer. This bypasses the broadcast-only logic and ensures the request is handled locally.
+    ```bash
+    # Triggers the 'motion' display
+    curl -X GET "http://localhost:8099/display?path=motion&sourceNodeId=test-node"
+    ```
+
+5.  **Monitor for Affirmative Proof:**
+    Use `logcat` to check for the affirmative logging that was added to confirm the flow is working as expected.
+    ```bash
+    # Look for logs from DisplayActivity and WebViewScreen
+    adb logcat -d DisplayActivity:I WebViewScreen:I *:S
+    ```
+    A successful run will show logs indicating that the `DisplayActivity` received the intent and the `WebViewScreen` loaded the correct URL.
+
+6.  **Clean Up:**
+    Remove the port forwarding rule when you are finished.
+    ```bash
+    adb forward --remove-all
+    ```

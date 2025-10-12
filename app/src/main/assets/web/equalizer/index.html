@@ -29,7 +29,7 @@
 </head>
 <body>
 <canvas id="equalizerCanvas"></canvas>
-<div id="message">Tap to start</div>
+<div id="message"></div>
 
 <script type="text/javascript">
     const canvas = document.getElementById('equalizerCanvas');
@@ -45,7 +45,7 @@
     let width, height;
     let deviceId;
 
-    const NUM_DEVICES = 20; // Total number of phones in the mesh
+    const NUM_DEVICES = 10; // Total number of phones in the mesh
 
     function getDeviceId() {
         let id = localStorage.getItem('deviceId');
@@ -109,15 +109,13 @@
         }
     }
 
-    window.addEventListener('resize', setup);
-    document.body.addEventListener('click', () => {
+    // Initial setup, and now start audio automatically.
+    setup();
+    function autoStartInWebView() {
         if (!audioContext) {
             setupAudio();
         }
-    });
-
-    // Initial setup, but wait for user interaction to start audio.
-    setup();
+    }
 
 </script>
 </body>
