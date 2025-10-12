@@ -39,7 +39,7 @@ class DisplayActivity : ComponentActivity() {
     private fun handleIntent(intent: Intent?) {
         intent?.extras?.let { bundle ->
             for (key in bundle.keySet()) {
-                Log.i("DisplayActivity", "Intent extra: $key = ${bundle.get(key)}")
+                Log.i("DisplayActivity", "Intent extra: $key = ${bundle.getString(key)}")
             }
         }
         pathState.value = intent?.getStringExtra(EXTRA_PATH) ?: "index.html"

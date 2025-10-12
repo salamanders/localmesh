@@ -33,7 +33,10 @@ fun WebViewScreen(url: String) {
                         val script = "typeof autoStartInWebView === 'function'"
                         view?.evaluateJavascript(script) { result ->
                             if ("true" == result) {
-                                Log.i("WebViewScreen", "Found autoStartInWebView in $url, executing.")
+                                Log.i(
+                                    "WebViewScreen",
+                                    "Found autoStartInWebView in $url, executing."
+                                )
                                 view.evaluateJavascript("autoStartInWebView();", null)
                             } else {
                                 Log.i("WebViewScreen", "No autoStartInWebView in $url, skipping.")
@@ -54,7 +57,10 @@ fun WebViewScreen(url: String) {
                 }
                 webChromeClient = object : WebChromeClient() {
                     override fun onPermissionRequest(request: PermissionRequest) {
-                        Log.i("WebViewScreen", "Granting permission for ${request.resources.joinToString()}")
+                        Log.i(
+                            "WebViewScreen",
+                            "Granting permission for ${request.resources.joinToString()}"
+                        )
                         request.grant(request.resources)
                     }
                 }

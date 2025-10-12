@@ -1,36 +1,61 @@
-# LocalMesh - P2P Web Bridge
+<div>
+  <br />
+  <img src="https://raw.githubusercontent.com/salamanders/localmesh/main/app/src/main/res/mipmap-xxxhdpi/ic_launcher.webp" alt="logo">
+  <h1>LocalMesh</h1>
+  <p>
+    A simple local mesh network for rapid prototyping
+  </p>
+</div>
 
-LocalMesh is a native Android application that acts as a bridge between a standard mobile web browser and the Android Nearby Connections API. It allows a web page, running on the same device, to communicate with other nearby devices over a peer-to-peer mesh network without needing an internet or cellular connection.
+**LocalMesh** creates a private, peer-to-peer network with nearby devices, allowing you to chat,
+share files, and run web applications without any internet or cellular connection. It turns a group
+of phones into their own self-contained network.
 
-## Project Overview
+## Key Features
 
-The core use case is to enable local, offline, multi-device web applications. A user runs the LocalMesh app, which starts a background service. They can then open a web application in their mobile browser (e.g., Chrome). JavaScript on that web page can send and receive messages with other nearby phones by making simple HTTP requests to the local server provided by the LocalMesh app.
+* **🔌 Serverless & Offline:** No internet, no problem. LocalMesh discovers and connects devices
+  automatically.
+* **💬 Chat & File Sharing:** Easily send messages and share files directly with anyone on your local
+  network.
+* **🌐 Web-Based Interface:** A clean, simple web UI for all interactions, accessible from your
+  phone's browser.
+* **🛠️ Extensible for Developers:** Build your own offline, multi-device web apps on top of the
+  LocalMesh platform using simple HTTP requests.
 
-## How it Works: The P2P Pass-Through Web Server
+## Use Cases
 
-The architecture is designed to be simple and extensible. It treats the P2P network as a transparent transport layer for HTTP requests.
+* **🏕️ Outdoor & Off-the-Grid:** Stay connected while hiking, camping, or traveling in remote areas.
+* **🎉 Crowded Events:** Communicate reliably at concerts, festivals, and stadiums where cell
+  networks fail.
+* **📚 Collaborative Environments:** Create local networks for classrooms, workshops, or team
+  projects.
+* **🚨 Emergency Preparedness:** A resilient communication tool when primary infrastructure is
+  unavailable.
 
-1.  **Local Server:** The app runs a lightweight Ktor server on `http://localhost:8099`.
-2.  **HTTP as the API:** All actions, whether initiated locally from the web UI or remotely from a peer, are standard HTTP requests. The Ktor routing block in `LocalHttpServer.kt` is the single source of truth for the application's API.
-3.  **Automatic Broadcasting:** A Ktor interceptor automatically examines every incoming local HTTP request. It serializes the request into an `HttpRequestWrapper` and broadcasts it to all peers on the mesh network.
-4.  **Remote Execution:** When a peer receives a broadcasted `HttpRequestWrapper`, it synthesizes an identical HTTP request and dispatches it to its own local Ktor server. A `sourceNodeId` parameter prevents the request from being endlessly re-broadcast.
+## Getting Started
 
-This design means any new feature added as a standard Ktor HTTP endpoint is automatically available to be triggered by peers with no additional P2P-specific code.
+1. **Install the App:** Install LocalMesh on two or more nearby Android phones.
+2. **Launch & Connect:**
+    * Open the app on each phone.
+    * Tap the **"Start Service"** button.
+    * The app will automatically find and connect to other LocalMesh users.
+3. **Open the Web UI:** The app will launch a web page where you can see connected peers, chat, and
+   share.
 
-## How to Build
+## For Developers
 
-For a fully automated setup and build process, use the provided `JULES.sh` script. This script is designed for a Linux-based environment and will download the required Android command-line tools, set up the SDK, and build the project.
+This project is built on a simple idea: treating the P2P network as a transparent
+transport layer for standard HTTP requests. Any feature you can build as a web endpoint is
+automatically available to peers.
 
-```bash
-bash JULES.sh
-```
+To dive into the architecture, data flows, and build instructions, please see our comprehensive *
+*[Developer Context Guide (GEMINI.md)](GEMINI.md)**.
 
-Alternatively, you can open the `android` directory in Android Studio and build the project normally.
+## Contributing
 
-## How to Run
+Contributions are welcome! Whether it's bug reports, feature suggestions, or code improvements,
+please feel free to open an issue or submit a pull request.
 
-1.  Build and install the app on two or more nearby Android devices.
-2.  Launch the app on each device.
-3.  Tap the "Start Service" button. This will request the necessary permissions and start the background service.
-4.  The app will then automatically launch the main web-based user interface.
-5.  Once the service is running, the app will automatically discover and connect to peers. The web UI will show the status and available actions.
+## License
+
+This project is licensed under the [MIT License](LICENSE).
