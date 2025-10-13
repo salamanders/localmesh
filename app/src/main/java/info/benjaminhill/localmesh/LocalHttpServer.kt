@@ -23,14 +23,15 @@ import io.ktor.server.application.createApplicationPlugin
 import io.ktor.server.application.install
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.server.plugins.partialcontent.PartialContent
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.request.httpMethod
 import io.ktor.server.request.path
 import io.ktor.server.request.receiveMultipart
 import io.ktor.server.request.receiveParameters
 import io.ktor.server.response.respond
+import io.ktor.server.response.respondFile
 import io.ktor.server.response.respondRedirect
-import io.ktor.server.response.respondOutputStream
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
@@ -137,6 +138,7 @@ class LocalHttpServer(
         install(ContentNegotiation) {
             json()
         }
+        install(PartialContent)
         install(p2pBroadcastInterceptor)
         install(StatusPages) {
             exception<Throwable> { call: ApplicationCall, cause ->
@@ -272,11 +274,7 @@ class LocalHttpServer(
                 val cachedFile = File(cacheDir, path)
 
                 if (cachedFile.exists() && cachedFile.isFile) {
-                    val contentType = ContentType.fromFileExtension(path).firstOrNull()
-                        ?: ContentType.Application.OctetStream
-                    call.respondOutputStream(contentType) {
-                        cachedFile.inputStream().copyTo(this)
-                    }
+                    call.respondFile(cachedFile)
                     return@get
                 }
 
