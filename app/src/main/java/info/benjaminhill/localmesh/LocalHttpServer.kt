@@ -31,6 +31,7 @@ import io.ktor.server.request.receiveMultipart
 import io.ktor.server.request.receiveParameters
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondFile
+import io.ktor.server.response.respondOutputStream
 import io.ktor.server.response.respondRedirect
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
@@ -68,7 +69,7 @@ data class StatusResponse(
  * It is the single source of truth for the application's API.
  *
  * ## What it does
- * - Serves the static web assets (HTML, CSS, JS) for the frontend.
+ * - Serves the static web assets (HTML, CSS, JS, MP4) for the frontend.
  * - Defines all API endpoints (e.g., `/status`, `/chat`, `/send-file`).
  * - Intercepts outgoing local requests and broadcasts them to peers as `HttpRequestWrapper` objects.
  * - Receives `HttpRequestWrapper` objects from peers (via `BridgeService`) and dispatches them as
@@ -100,7 +101,7 @@ class LocalHttpServer(
         createApplicationPlugin(name = "P2PBroadcastInterceptor") {
             onCall { call ->
                 // --- Step 1: Check if the request should be broadcast ---
-                val isFromPeer = call.request.queryParameters["sourceNodeId"] != null
+                val isFromPeer = call.request.queryParameters["sourceNodeId"]?.takeUnless { it.isEmpty() }  != null
                 val path = call.request.path()
 
                 if (isFromPeer || path !in BROADCAST_PATHS) {
