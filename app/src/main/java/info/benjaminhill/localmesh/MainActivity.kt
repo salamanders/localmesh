@@ -1,9 +1,9 @@
 package info.benjaminhill.localmesh
 
-import android.Manifest
 import android.content.Intent
 import android.os.Bundle
 import android.util.Log
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -14,7 +14,9 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import info.benjaminhill.localmesh.mesh.BridgeService
+import info.benjaminhill.localmesh.util.PermissionUtils
 
 /**
  * The main entry point for the application.
@@ -34,33 +36,42 @@ class MainActivity : ComponentActivity() {
             Log.i(TAG, "Permissions granted, starting service...")
             startBridgeServiceAndWebView()
         } else {
-            Log.e(TAG, "Permissions not granted. Please enable them in settings.")
-            // TODO: Show a more user-friendly message
+            Log.e(TAG, "User denied permissions.")
+            Toast.makeText(
+                this,
+                "Permissions are required for LocalMesh to function. Please enable them in settings.",
+                Toast.LENGTH_LONG
+            ).show()
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent {
-            Column(
-                modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Button(onClick = {
-                    requestPermissionLauncher.launch(
-                        arrayOf(
-                            Manifest.permission.BLUETOOTH_SCAN,
-                            Manifest.permission.BLUETOOTH_ADVERTISE,
-                            Manifest.permission.BLUETOOTH_CONNECT,
-                            Manifest.permission.ACCESS_FINE_LOCATION,
-                            Manifest.permission.NEARBY_WIFI_DEVICES,
-                            Manifest.permission.POST_NOTIFICATIONS,
-                            Manifest.permission.NFC,
+
+        // Check for a testing hook flag in the intent. This allows automated scripts
+        // to bypass the UI and trigger the service start sequence directly.
+        if (intent.getBooleanExtra("auto_start", false)) {
+            // Since permissions should already be granted by the test script (e.g., via `adb install -g`),
+            // this will immediately trigger the `startBridgeServiceAndWebView()` call in the callback.
+            requestPermissionLauncher.launch(PermissionUtils.getDangerousPermissions(this))
+        } else {
+            // Standard interactive startup: show the button to the user.
+            setContent {
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    val context = LocalContext.current
+                    Button(onClick = {
+                        requestPermissionLauncher.launch(
+                            PermissionUtils.getDangerousPermissions(
+                                context
+                            )
                         )
-                    )
-                }) {
-                    Text("Start Service")
+                    }) {
+                        Text("Start Service")
+                    }
                 }
             }
         }
@@ -74,7 +85,9 @@ class MainActivity : ComponentActivity() {
             startService(it)
         }
 
-        // Launch the display activity
+        // Launch the DisplayActivity to show the main UI. Due to its 'singleTop' launchMode,
+        // future P2P display commands will reuse this Activity instance by sending it a new Intent
+        // via the onNewIntent() callback.
         Intent(this, DisplayActivity::class.java).apply {
             putExtra(DisplayActivity.EXTRA_PATH, "index.html")
         }.also {

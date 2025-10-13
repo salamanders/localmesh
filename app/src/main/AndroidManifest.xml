@@ -40,6 +40,7 @@
         </activity>
         <service
             android:name=".mesh.BridgeService"
+            android:exported="true"
             android:foregroundServiceType="connectedDevice" />
         <activity
             android:name=".DisplayActivity"

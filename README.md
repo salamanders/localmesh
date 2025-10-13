@@ -48,8 +48,8 @@ This project is built on a simple idea: treating the P2P network as a transparen
 transport layer for standard HTTP requests. Any feature you can build as a web endpoint is
 automatically available to peers.
 
-To dive into the architecture, data flows, and build instructions, please see our comprehensive *
-*[Developer Context Guide (GEMINI.md)](GEMINI.md)**.
+To dive into the architecture, data flows, and build instructions, please see our
+comprehensive [Developer Context Guide (GEMINI.md)](GEMINI.md).
 
 ## Contributing
 

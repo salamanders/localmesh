@@ -95,14 +95,12 @@ class LocalHttpServer(
      */
     internal val p2pBroadcastInterceptor =
         createApplicationPlugin(name = "P2PBroadcastInterceptor") {
-            val broadcastPaths = setOf("/chat", "/display")
-
             onCall { call ->
                 // --- Step 1: Check if the request should be broadcast ---
                 val isFromPeer = call.request.queryParameters["sourceNodeId"] != null
                 val path = call.request.path()
 
-                if (isFromPeer || path !in broadcastPaths) {
+                if (isFromPeer || path !in BROADCAST_PATHS) {
                     // Let the request proceed normally without broadcasting.
                     return@onCall
                 }
@@ -346,5 +344,6 @@ class LocalHttpServer(
 
     companion object {
         const val PORT = 8099
+        private val BROADCAST_PATHS = setOf("/chat", "/display")
     }
 }

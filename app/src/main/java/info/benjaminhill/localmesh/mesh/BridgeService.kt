@@ -19,6 +19,7 @@ import info.benjaminhill.localmesh.LogFileWriter
 import info.benjaminhill.localmesh.MainActivity
 import info.benjaminhill.localmesh.R
 import info.benjaminhill.localmesh.util.GlobalExceptionHandler.runCatchingWithLogging
+import info.benjaminhill.localmesh.util.PermissionUtils
 import io.ktor.http.parseUrlEncodedParameters
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -224,20 +225,14 @@ class BridgeService : Service() {
             return false
         }
 
-        val requiredPermissions = arrayOf(
-            android.Manifest.permission.BLUETOOTH_SCAN,
-            android.Manifest.permission.BLUETOOTH_ADVERTISE,
-            android.Manifest.permission.BLUETOOTH_CONNECT,
-            android.Manifest.permission.ACCESS_FINE_LOCATION
-        )
-        return requiredPermissions.all { permission ->
-            if (checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED) {
-                true
-            } else {
+        val requiredPermissions = PermissionUtils.getDangerousPermissions(this)
+        for (permission in requiredPermissions) {
+            if (checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) {
                 sendLogMessage("Permission not granted: $permission")
-                false
+                return false
             }
         }
+        return true
     }
 
     private fun stop() {
