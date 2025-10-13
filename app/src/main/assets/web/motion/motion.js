@@ -35,11 +35,13 @@ function autoStartInWebView() {
             .then(permissionState => {
                 if (permissionState === 'granted') {
                     window.addEventListener('devicemotion', handleMotionEvent);
+                    console.log('LOCALMESH_SCRIPT_SUCCESS:motion');
                 }
             })
             .catch(console.error);
     } else {
         // Android and other browsers
         window.addEventListener('devicemotion', handleMotionEvent);
+        console.log('LOCALMESH_SCRIPT_SUCCESS:motion');
     }
 }

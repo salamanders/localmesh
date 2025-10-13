@@ -121,3 +121,4 @@ onWindowResize();
 lookSomewhere();
 console.log(meshEye.rotation.x, meshEye.rotation.y, meshEye.rotation.z);
 animate();
+console.log('LOCALMESH_SCRIPT_SUCCESS:eye');

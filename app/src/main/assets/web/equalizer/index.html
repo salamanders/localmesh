@@ -71,6 +71,7 @@
             message.style.display = 'none';
             setup();
             animate();
+            console.log('LOCALMESH_SCRIPT_SUCCESS:equalizer');
         } catch (err) {
             console.error('Error accessing microphone:', err);
             message.textContent = 'Could not access microphone. Please allow permission.';
