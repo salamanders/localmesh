@@ -29,6 +29,7 @@ import io.ktor.server.request.path
 import io.ktor.server.request.receiveMultipart
 import io.ktor.server.request.receiveParameters
 import io.ktor.server.response.respond
+import io.ktor.server.response.respondRedirect
 import io.ktor.server.response.respondOutputStream
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
@@ -42,11 +43,12 @@ import io.ktor.server.cio.CIO as KtorCIO
 
 // Extension function to check if an asset path is a directory
 fun AssetManager.isDirectory(path: String): Boolean {
+    val normalizedPath = if(path.endsWith("/")) path.substring(0, path.length - 1) else path
     // A path is a directory if it's not empty and we can list its contents.
     // A file will throw an IOException, which list() catches and returns null.
     // An empty directory will return an empty array, which is a valid directory.
-    return !path.endsWith("/") && try {
-        this.list(path)?.isNotEmpty() == true
+    return try {
+        this.list(normalizedPath)?.isNotEmpty() == true
     } catch (_: IOException) {
         false
     }
@@ -260,6 +262,7 @@ class LocalHttpServer(
             }
 
             get("/{path...}") {
+                logMessageCallback("GET request for path: ${call.request.path()}")
                 var path = call.parameters.getAll("path")?.joinToString("/") ?: return@get
                 if (path.isBlank() || path == "/") {
                     path = "index.html" // Default to index.html for root
@@ -281,8 +284,14 @@ class LocalHttpServer(
                 logMessageCallback("Checking if '$assetPath' is a directory.")
                 val isDir = service.applicationContext.assets.isDirectory(assetPath)
                 logMessageCallback("'$assetPath' is directory: $isDir")
+
+                if (isDir && !call.request.path().endsWith("/")) {
+                    call.respondRedirect(call.request.path() + "/")
+                    return@get
+                }
+
                 if (isDir) {
-                    assetPath = "$assetPath/index.html"
+                    assetPath = assetPath.removeSuffix("/") + "/index.html"
                     logMessageCallback("Updated assetPath to '$assetPath'")
                 }
 

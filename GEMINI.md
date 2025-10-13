@@ -1,8 +1,9 @@
 # LocalMesh: Technical Deep Dive
 
-> **This document is the central technical reference for LocalMesh developers.** It provides a
-> comprehensive overview of the project's architecture, data flows, and development practices. For a
-> user-focused summary, please see the main [README.md](README.md).
+**This document is the central technical reference for LocalMesh developers.**
+
+It provides a comprehensive overview of the project's architecture, data flows, and development
+practices. For a user-focused summary, please see the main [README.md](README.md).
 
 ---
 
@@ -155,15 +156,9 @@ device.
 
 ### Automated Setup
 
-For a fully automated setup and build process on a Linux-based environment, use the provided script.
-It will download and configure all required Android SDK components.
-
-```bash
-bash JULES.sh
-```
-
-> **Note for gemini-cli users:** If you are running in the gemini-cli environment, you should
-> instead run `./gradlew assembleDebug`.
+For a fully automated setup and build process on a Linux-based environment (e.g. within
+jules.google.com), use the provided script: `bash JULES.sh`. It will download and configure all
+required Android SDK components.
 
 ### Manual Steps
 
@@ -211,9 +206,6 @@ The Ktor server in `LocalHttpServer.kt` defines the following routes:
 
 ## 8. Fully Automated End-to-End Testing
 
-Thanks to a testing hook added to `MainActivity`, it is now possible to run a fully automated
-end-to-end test from the command line without any manual UI interaction.
-
 ### Test Workflow
 
 1. **Build and Grant Permissions:**
@@ -230,13 +222,13 @@ end-to-end test from the command line without any manual UI interaction.
    is the testing hook that tells the activity to bypass the "Start Service" button and immediately
    trigger the service launch sequence.
    ```bash
-   adb shell am start -n info.benjaminhill.localmesh/.MainActivity -e auto_start true
+   adb shell am start -n info.benjaminhill.localmesh/.MainActivity --ez auto_start true
    ```
    The app will briefly flash on screen and then proceed directly to the main web UI, with the
    `BridgeService` running in the background.
 
 3. **Allow for Initialization:**
-   Wait a few seconds for the service to initialize completely.
+   Wait a few seconds for the service to initialize completely. (only if the steps are being done without user interaction.)
    ```bash
    sleep 3
    ```
@@ -256,7 +248,8 @@ end-to-end test from the command line without any manual UI interaction.
    ```
 
 6. **Monitor for Proof:**
-   Check `logcat` for logs confirming the action was received and executed correctly.
+   Check `logcat` for logs confirming the action was received and executed correctly. Note: make
+   sure you aren't reading a previous run's logcat. Clear the logcat if necessary.
    ```bash
    adb logcat -d DisplayActivity:I WebViewScreen:I *:S
    ```
@@ -269,18 +262,18 @@ end-to-end test from the command line without any manual UI interaction.
 
 ### Additional Notes for Gemini
 
-* Don't be obsequious. My ideas aren't "wonderful" or "fantastic" or "brilliant". At most say (if it
-  is true) "I can confirm that is a better plan."  Don't use phrases like "You are absolutely
-  right." or "My apologies"
+* Don't be obsequious. The user's ideas aren't "wonderful" or "fantastic" or "brilliant". Don't use
+  phrases like "You are absolutely
+  right." or "My apologies" At most say (if it is true) "I can confirm that is a better plan."
 * A feature, bug fix, or refactor is never done until we have positive proof that it worked. This
-  means extra compile/run/tests. That is worth it.
+  means extra compile/run/tests. That is **always** worth it.
 
 ---
 
 ## 9. Development Journal
 
-> This section serves as a log of the current development state, goals, and challenges. It should be
-> updated as work progresses.
+This section serves as a log of the current development state, goals, and challenges. It should be
+updated as work progresses.
 
 ### 9.1. Goal
 

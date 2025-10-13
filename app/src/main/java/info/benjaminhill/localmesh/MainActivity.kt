@@ -51,6 +51,7 @@ class MainActivity : ComponentActivity() {
         // Check for a testing hook flag in the intent. This allows automated scripts
         // to bypass the UI and trigger the service start sequence directly.
         if (intent.getBooleanExtra("auto_start", false)) {
+            Log.d(TAG, "auto_start extra found, launching permissions check.")
             // Since permissions should already be granted by the test script (e.g., via `adb install -g`),
             // this will immediately trigger the `startBridgeServiceAndWebView()` call in the callback.
             requestPermissionLauncher.launch(PermissionUtils.getDangerousPermissions(this))
@@ -78,6 +79,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startBridgeServiceAndWebView() {
+        Log.d(TAG, "startBridgeServiceAndWebView() called.")
         // Start the service
         Intent(this, BridgeService::class.java).apply {
             action = BridgeService.ACTION_START
