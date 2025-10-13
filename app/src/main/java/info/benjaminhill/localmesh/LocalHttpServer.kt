@@ -21,6 +21,7 @@ import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.createApplicationPlugin
 import io.ktor.server.application.install
+import io.ktor.server.cio.CIO as KtorCIO
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.partialcontent.PartialContent
@@ -36,16 +37,16 @@ import io.ktor.server.response.respondRedirect
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
+import io.ktor.util.cio.toByteReadChannel
 import io.ktor.utils.io.jvm.javaio.toInputStream
-import kotlinx.serialization.Serializable
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
-import io.ktor.server.cio.CIO as KtorCIO
+import kotlinx.serialization.Serializable
 
 // Extension function to check if an asset path is a directory
 fun AssetManager.isDirectory(path: String): Boolean {
-    val normalizedPath = if(path.endsWith("/")) path.substring(0, path.length - 1) else path
+    val normalizedPath = if (path.endsWith("/")) path.substring(0, path.length - 1) else path
     // A path is a directory if it's not empty and we can list its contents.
     // A file will throw an IOException, which list() catches and returns null.
     // An empty directory will return an empty array, which is a valid directory.
@@ -298,9 +299,7 @@ class LocalHttpServer(
                 service.applicationContext.assets.open(assetPath).use { inputStream ->
                     val contentType = ContentType.fromFileExtension(assetPath).firstOrNull()
                         ?: ContentType.Application.OctetStream
-                    call.respondOutputStream(contentType) {
-                        inputStream.copyTo(this)
-                    }
+                    call.respond(inputStream.toByteReadChannel())
                 }
             }
         }
