@@ -24,9 +24,19 @@ import io.ktor.http.parseUrlEncodedParameters
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.TimeUnit
+import kotlin.math.pow
+import kotlin.random.Random
+import java.net.URLEncoder
+
+private fun String.encodeURLParameter(): String = URLEncoder.encode(this, "UTF-8")
 
 /**
  * The central foreground service that orchestrates the entire P2P bridge.
@@ -63,10 +73,15 @@ class BridgeService : Service() {
     internal val incomingFilePayloads = ConcurrentHashMap<Long, String>()
     internal var ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 
+    private val supervisorJob = SupervisorJob()
+    private val serviceScope = CoroutineScope(Dispatchers.IO + supervisorJob)
+    private var healthCheckScheduler: ScheduledExecutorService? = null
+    private var restartCount = 0
+
     override fun onCreate() {
         super.onCreate()
         Log.i(TAG, "onCreate() called")
-        runCatchingWithLogging(::logError) {
+        runCatching {
             endpointName =
                 (('A'..'Z') + ('a'..'z') + ('0'..'9')).shuffled().take(5).joinToString("")
             logFileWriter = LogFileWriter(applicationContext)
@@ -75,11 +90,10 @@ class BridgeService : Service() {
             }
             if (!::nearbyConnectionsManager.isInitialized) {
                 nearbyConnectionsManager = NearbyConnectionsManager(
-                    context = this,
+                    service = this,
                     endpointName = endpointName,
                     peerCountUpdateCallback = { /* No-op, web UI will poll /status */ },
                     logMessageCallback = ::sendLogMessage,
-                    logErrorCallback = ::logError
                 ) { _, payload ->
                     when (payload.type) {
                         Payload.Type.BYTES -> handleBytesPayload(payload)
@@ -89,14 +103,14 @@ class BridgeService : Service() {
                 }
             }
             Log.i(TAG, "onCreate() finished successfully")
-        } ?: run {
-            sendLogMessage("FATAL: Service crashed on create.")
+        }.onFailure {
+            logError("FATAL: Service crashed on create.", it)
             currentState = BridgeState.Error("onCreate failed")
         }
     }
 
     internal fun handleBytesPayload(payload: Payload) {
-        runCatchingWithLogging(::logError) {
+        runCatching {
             val jsonString = payload.asBytes()!!.toString(Charsets.UTF_8)
             val wrapper = HttpRequestWrapper.fromJson(jsonString)
 
@@ -110,10 +124,11 @@ class BridgeService : Service() {
                     sendLogMessage("Expecting file '$filename' for payload $payloadId")
                 }
             }
-
-            CoroutineScope(ioDispatcher).launch {
+            serviceScope.launch {
                 localHttpServer.dispatchRequest(wrapper)
             }
+        }.onFailure { throwable ->
+            scheduleRestart("handleBytesPayload failed", throwable)
         }
     }
 
@@ -123,7 +138,7 @@ class BridgeService : Service() {
             sendLogMessage("Received stream payload with unknown ID: ${payload.id}")
             return
         }
-        runCatchingWithLogging(::logError) {
+        runCatching {
             val cacheDir = File(applicationContext.cacheDir, "web_cache").also { it.mkdirs() }
             val file = File(cacheDir, filename)
             file.parentFile?.mkdirs()
@@ -133,6 +148,8 @@ class BridgeService : Service() {
                 }
             }
             sendLogMessage("File received and cached: $filename")
+        }.onFailure {
+            scheduleRestart("handleStreamPayload failed for $filename", it)
         }
     }
 
@@ -148,6 +165,59 @@ class BridgeService : Service() {
             else -> Log.w(TAG, "onStartCommand: Unknown action: ${intent?.action}")
         }
         return START_STICKY
+    }
+
+    private fun startManagedServices(): Boolean {
+        sendLogMessage("Supervisor: Starting managed services...")
+        if (!localHttpServer.start()) {
+            sendLogMessage("FATAL: LocalHttpServer failed to start.")
+            return false
+        }
+        if (!checkHardwareAndPermissions()) {
+            return false
+        }
+        nearbyConnectionsManager.start()
+        currentState = BridgeState.Running
+        sendLogMessage("Supervisor: Managed services started successfully.")
+        return true
+    }
+
+    private fun stopManagedServices() {
+        sendLogMessage("Supervisor: Stopping managed services.")
+        nearbyConnectionsManager.stop()
+        localHttpServer.stop()
+    }
+
+    fun scheduleRestart(reason: String, throwable: Throwable?) {
+        logError("Scheduling restart: $reason", throwable)
+        serviceScope.launch {
+            stopManagedServices()
+
+            val backoffMillis = (1000 * 2.0.pow(restartCount)).toLong() + Random.nextLong(1000)
+            restartCount++
+
+            val chatMessage =
+                "Node ${endpointName} restarting in ${backoffMillis / 1000}s due to error: $reason"
+            val chatWrapper = HttpRequestWrapper(
+                method = "POST",
+                path = "/chat",
+                queryParams = "message=${chatMessage.encodeURLParameter()}",
+                body = "",
+                sourceNodeId = "system"
+            )
+            broadcast(chatWrapper.toJson())
+
+            delay(backoffMillis)
+
+            sendLogMessage("Attempting to restart services (attempt #${restartCount})...")
+            if (startManagedServices()) {
+                restartCount = 0 // Reset on successful start
+                sendLogMessage("Services restarted successfully.")
+            } else {
+                logError("Failed to restart services. Scheduling another attempt.", null)
+                scheduleRestart("Restart failed", null)
+            }
+        }
     }
 
     fun broadcast(jsonString: String) {
@@ -171,45 +241,52 @@ class BridgeService : Service() {
     }
 
     private fun start() {
-        sendLogMessage("BridgeService.start()")
+        sendLogMessage("BridgeService.start() received.")
         if (currentState !is BridgeState.Idle) {
             sendLogMessage("Service is not idle, cannot start. Current state: ${currentState::class.java.simpleName}")
             return
         }
         currentState = BridgeState.Starting
 
-        // Start the local HTTP server immediately.
-        if (!localHttpServer.start()) {
-            sendLogMessage("FATAL: LocalHttpServer failed to start.")
-            currentState = BridgeState.Error("HTTP server failed to start.")
-            stopSelf()
-            return
-        }
-
-        if (!checkHardwareAndPermissions()) {
-            currentState =
-                BridgeState.Error("Hardware or permissions not met.")
-            // Do not stop the entire service, the web UI might be useful.
-            return
-        }
-
         createNotificationChannel()
         val notificationIntent = Intent(this, MainActivity::class.java)
         val pendingIntent =
             PendingIntent.getActivity(this, 0, notificationIntent, PendingIntent.FLAG_IMMUTABLE)
-
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("P2P Web Bridge")
-            .setContentText("Running...")
+            .setContentText("Starting...")
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentIntent(pendingIntent)
             .build()
-
         startForeground(1, notification, FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
-        nearbyConnectionsManager.start()
-        acquireWakeLock()
-        currentState = BridgeState.Running
-        sendLogMessage("Service started and running.")
+
+        if (!startManagedServices()) {
+            scheduleRestart("Initial start failed", null)
+        } else {
+            healthCheckScheduler = Executors.newSingleThreadScheduledExecutor()
+            healthCheckScheduler?.scheduleAtFixedRate(
+                ::runHealthCheck,
+                30,
+                30,
+                TimeUnit.MINUTES
+            )
+            refreshWakelock() // Acquire initial wakelock
+            sendLogMessage("Service started and running.")
+        }
+    }
+
+    private fun runHealthCheck() {
+        sendLogMessage("Running health check...")
+        val isServerOk = localHttpServer.isRunning()
+        val isNearbyOk = nearbyConnectionsManager.isHealthy()
+
+        if (isServerOk && isNearbyOk) {
+            sendLogMessage("Health check passed.")
+            refreshWakelock()
+        } else {
+            val reason = "Health check failed: serverOk=$isServerOk, nearbyOk=$isNearbyOk"
+            scheduleRestart(reason, null)
+        }
     }
 
     private fun checkHardwareAndPermissions(): Boolean {
@@ -236,29 +313,35 @@ class BridgeService : Service() {
     }
 
     private fun stop() {
-        sendLogMessage("BridgeService.stop()")
+        sendLogMessage("BridgeService.stop() received.")
         currentState = BridgeState.Stopping
-
-        nearbyConnectionsManager.stop()
-        localHttpServer.stop()
-        releaseWakeLock()
+        healthCheckScheduler?.shutdownNow()
+        healthCheckScheduler = null
+        stopManagedServices()
+        releaseWakelock()
+        supervisorJob.cancel()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
-
         currentState = BridgeState.Idle
         sendLogMessage("Service stopped.")
     }
 
-    private fun acquireWakeLock() {
-        wakeLock = (getSystemService(POWER_SERVICE) as PowerManager).run {
-            newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "LocalMesh::WakeLock").apply {
-                acquire(4 * 60 * 60 * 1000L /*4 hours*/)
+    private fun refreshWakelock() {
+        serviceScope.launch {
+            releaseWakelock() // Release any existing lock
+            wakeLock = (getSystemService(POWER_SERVICE) as PowerManager).run {
+                newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "LocalMesh::WakeLock").apply {
+                    acquire(90 * 60 * 1000L /* 1.5 hours */)
+                }
             }
+            sendLogMessage("Wakelock refreshed.")
         }
     }
 
-    private fun releaseWakeLock() {
-        wakeLock?.release()
+    private fun releaseWakelock() {
+        if (wakeLock?.isHeld == true) {
+            wakeLock?.release()
+        }
         wakeLock = null
     }
 
@@ -276,7 +359,7 @@ class BridgeService : Service() {
         logFileWriter.writeLog(message)
     }
 
-    private fun logError(message: String, throwable: Throwable?) {
+    internal fun logError(message: String, throwable: Throwable?) {
         if (throwable != null) {
             Log.e(TAG, message, throwable)
             logFileWriter.writeLog("ERROR: $message, ${throwable.message}")

@@ -45,14 +45,14 @@ import kotlin.math.pow
  *   as the orchestrator, connecting this manager to the `LocalHttpServer`.
  */
 class NearbyConnectionsManager(
-    private val context: Context,
-    private val endpointName: String = UUID.randomUUID().toString().substring(0, 4),
+    private val service: BridgeService,
+    private val endpointName: String,
     private val peerCountUpdateCallback: (Int) -> Unit,
     private val logMessageCallback: (String) -> Unit,
-    private val logErrorCallback: (String, Throwable) -> Unit,
     private val payloadReceivedCallback: (endpointId: String, payload: Payload) -> Unit,
 ) {
 
+    private val context: Context = service.applicationContext
     private val connectionsClient: ConnectionsClient by lazy {
         Nearby.getConnectionsClient(context)
     }
@@ -60,6 +60,10 @@ class NearbyConnectionsManager(
     private val serviceId = "info.benjaminhill.localmesh.v1"
     private val connectedEndpoints = ConcurrentLinkedQueue<String>()
     private val retryCounts = mutableMapOf<String, Int>()
+    @Volatile
+    private var isAdvertising = false
+    @Volatile
+    private var isDiscovering = false
 
     fun start() {
         logMessageCallback("NearbyConnectionsManager.start()")
@@ -74,18 +78,23 @@ class NearbyConnectionsManager(
         connectionsClient.stopAllEndpoints()
         connectedEndpoints.clear()
         retryCounts.clear()
+        isAdvertising = false
+        isDiscovering = false
     }
 
-    fun sendPayload(endpointIds: List<String>, payload: Payload) =
-        runCatchingWithLogging({ msg, err ->
-            logErrorCallback(msg, err ?: Exception(msg))
-        }) {
+    fun isHealthy(): Boolean = isAdvertising && isDiscovering
+
+    fun sendPayload(endpointIds: List<String>, payload: Payload) {
+        runCatching {
             logMessageCallback("NearbyConnectionsManager.sendPayload() to ${endpointIds.size} endpoints.")
             connectionsClient.sendPayload(endpointIds, payload)
                 .addOnFailureListener { e ->
-                    logErrorCallback("Failed to send payload ${payload.id}", e)
+                    service.logError("Failed to send payload ${payload.id}", e)
                 }
+        }.onFailure {
+            service.logError("sendPayload failed", it)
         }
+    }
 
     fun broadcastBytes(payload: ByteArray) {
         sendPayload(connectedEndpoints.toList(), Payload.fromBytes(payload))
@@ -97,49 +106,57 @@ class NearbyConnectionsManager(
     val connectedPeerIds: List<String>
         get() = connectedEndpoints.toList()
 
-    private suspend fun startAdvertising() = runCatchingWithLogging({ msg, err ->
-        logErrorCallback(msg, err ?: Exception(msg))
-    }) {
-        withContext(Dispatchers.IO) {
-            val advertisingOptions =
-                AdvertisingOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).build()
-            connectionsClient.startAdvertising(
-                endpointName,
-                serviceId,
-                connectionLifecycleCallback,
-                advertisingOptions
-            ).addOnSuccessListener {
-                logMessageCallback("Advertising started.")
-            }.addOnFailureListener { e ->
-                logErrorCallback("Failed to start advertising", e)
+    private suspend fun startAdvertising() {
+        runCatching {
+            withContext(Dispatchers.IO) {
+                val advertisingOptions =
+                    AdvertisingOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).build()
+                connectionsClient.startAdvertising(
+                    endpointName,
+                    serviceId,
+                    connectionLifecycleCallback,
+                    advertisingOptions
+                ).addOnSuccessListener {
+                    logMessageCallback("Advertising started.")
+                    isAdvertising = true
+                }.addOnFailureListener { e ->
+                    service.logError("Failed to start advertising", e)
+                    isAdvertising = false
+                }
             }
+        }.onFailure {
+            service.logError("startAdvertising failed", it)
         }
     }
 
-    private suspend fun startDiscovery() = runCatchingWithLogging({ msg, err ->
-        logErrorCallback(msg, err ?: Exception(msg))
-    }) {
-        withContext(Dispatchers.IO) {
-            val discoveryOptions =
-                DiscoveryOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).build()
-            connectionsClient.startDiscovery(
-                serviceId,
-                endpointDiscoveryCallback,
-                discoveryOptions
-            ).addOnSuccessListener {
-                logMessageCallback("Discovery started.")
-            }.addOnFailureListener { e ->
-                logErrorCallback("Failed to start discovery", e)
+    private suspend fun startDiscovery() {
+        runCatching {
+            withContext(Dispatchers.IO) {
+                val discoveryOptions =
+                    DiscoveryOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).build()
+                connectionsClient.startDiscovery(
+                    serviceId,
+                    endpointDiscoveryCallback,
+                    discoveryOptions
+                ).addOnSuccessListener {
+                    logMessageCallback("Discovery started.")
+                    isDiscovering = true
+                }.addOnFailureListener { e ->
+                    service.logError("Failed to start discovery", e)
+                    isDiscovering = false
+                }
             }
+        }.onFailure {
+            service.logError("startDiscovery failed", it)
         }
     }
 
     private val payloadCallback = object : PayloadCallback() {
         override fun onPayloadReceived(endpointId: String, payload: Payload) {
-            runCatchingWithLogging({ msg, err ->
-                logErrorCallback(msg, err ?: Exception(msg))
-            }) {
+            runCatching {
                 payloadReceivedCallback(endpointId, payload)
+            }.onFailure { throwable ->
+                service.scheduleRestart("onPayloadReceived failed", throwable)
             }
         }
 
@@ -151,14 +168,14 @@ class NearbyConnectionsManager(
     private val connectionLifecycleCallback: ConnectionLifecycleCallback =
         object : ConnectionLifecycleCallback() {
             override fun onConnectionInitiated(endpointId: String, connectionInfo: ConnectionInfo) {
-                runCatchingWithLogging({ msg, err ->
-                    logErrorCallback(msg, err ?: Exception(msg))
-                }) {
+                runCatching {
                     logMessageCallback("onConnectionInitiated from ${connectionInfo.endpointName} (id:$endpointId)")
                     connectionsClient.acceptConnection(endpointId, payloadCallback)
                         .addOnFailureListener { e ->
-                            logErrorCallback("Failed to accept connection from $endpointId", e)
+                            service.logError("Failed to accept connection from $endpointId", e)
                         }
+                }.onFailure {
+                    service.logError("onConnectionInitiated failed", it)
                 }
             }
 
@@ -198,9 +215,7 @@ class NearbyConnectionsManager(
     }
 
     private fun requestConnection(endpointId: String) {
-        runCatchingWithLogging({ msg, err ->
-            logErrorCallback(msg, err ?: Exception(msg))
-        }) {
+        runCatching {
             connectionsClient.requestConnection(
                 endpointName,
                 endpointId,
@@ -212,7 +227,7 @@ class NearbyConnectionsManager(
                 }
                 .addOnFailureListener { e ->
                     val statusCode = (e as? ApiException)?.statusCode
-                    logErrorCallback(
+                    service.logError(
                         "Failed to request connection to $endpointId (code: $statusCode)",
                         e
                     )
@@ -222,6 +237,8 @@ class NearbyConnectionsManager(
                         }
                     }
                 }
+        }.onFailure {
+            service.logError("requestConnection failed", it)
         }
     }
 

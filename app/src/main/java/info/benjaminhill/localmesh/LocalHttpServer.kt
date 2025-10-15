@@ -7,6 +7,7 @@ import info.benjaminhill.localmesh.mesh.HttpRequestWrapper
 import info.benjaminhill.localmesh.util.GlobalExceptionHandler.runCatchingWithLogging
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
+import io.ktor.client.request.get
 import io.ktor.client.request.request
 import io.ktor.client.request.setBody
 import io.ktor.http.ContentType
@@ -42,6 +43,7 @@ import io.ktor.utils.io.jvm.javaio.toInputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.Serializable
 
 // Extension function to check if an asset path is a directory
@@ -319,17 +321,22 @@ class LocalHttpServer(
         httpClient.close()
     }
 
+    fun isRunning(): Boolean = runBlocking {
+        runCatching {
+            val response = httpClient.get("http://localhost:$PORT/status")
+            response.status == HttpStatusCode.OK
+        }.getOrDefault(false)
+    }
+
     /**
      * Receives a request from a peer and dispatches it to the local Ktor server.
      */
-    suspend fun dispatchRequest(wrapper: HttpRequestWrapper) =
-        runCatchingWithLogging({ msg, err ->
-            logErrorCallback(msg, err ?: Exception(msg))
-        }) {
+    suspend fun dispatchRequest(wrapper: HttpRequestWrapper) {
+        runCatching {
             // Prevent re-dispatching a request that originated from this node
             if (wrapper.sourceNodeId == service.endpointName) {
                 logMessageCallback("Not dispatching own request: ${wrapper.path}")
-                return@runCatchingWithLogging
+                return
             }
 
             val url = if (wrapper.queryParams.isNotEmpty()) {
@@ -347,7 +354,10 @@ class LocalHttpServer(
                 }
             }
             logMessageCallback("Dispatched request '${wrapper.path}' from '${wrapper.sourceNodeId}' completed with status: ${response.status}")
+        }.onFailure { throwable ->
+            service.scheduleRestart("dispatchRequest failed for ${wrapper.path}", throwable)
         }
+    }
 
     companion object {
         const val PORT = 8099
