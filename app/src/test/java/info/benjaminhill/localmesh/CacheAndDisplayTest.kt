@@ -7,6 +7,7 @@ import com.google.android.gms.nearby.connection.Payload
 import info.benjaminhill.localmesh.mesh.BridgeService
 import info.benjaminhill.localmesh.mesh.HttpRequestWrapper
 import info.benjaminhill.localmesh.mesh.NearbyConnectionsManager
+import info.benjaminhill.localmesh.util.AssetManager
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.request.get
@@ -53,7 +54,7 @@ class CacheAndDisplayTest {
 
         // 4. Define the cache directory and create a temporary file to "receive"
         val context: Context = ApplicationProvider.getApplicationContext()
-        webCacheDir = File(context.cacheDir, "web_cache")
+        webCacheDir = File(context.filesDir, AssetManager.UNPACKED_FILES_DIR)
         webCacheDir.mkdirs()
 
         val content = "<html><body>Hello, Cached World!</body></html>"

@@ -48,7 +48,6 @@ mandatory for all tasks.
 6. [API Reference](#6-api-reference)
 7. [Development Guidelines](#7-development-guidelines)
 8. [End-to-End Testing](#8-fully-automated-end-to-end-testing)
-9. [Development Journal](#9-development-journal)
 
 ---
 
@@ -227,19 +226,13 @@ The Ktor server in `LocalHttpServer.kt` defines the following routes:
    The app will briefly flash on screen and then proceed directly to the main web UI, with the
    `BridgeService` running in the background.
 
-3. **Allow for Initialization:**
-   Wait a few seconds for the service to initialize completely. (only if the steps are being done without user interaction.)
-   ```bash
-   sleep 3
-   ```
-
-4. **Forward the Device Port:**
+3. **Forward the Device Port:**
    Forward the device's port to your local machine to enable `curl` commands.
    ```bash
    adb forward tcp:8099 tcp:8099
    ```
 
-5. **Trigger an Action via API:**
+4. **Trigger an Action via API:**
    Use `curl` to send commands to the app's local server. To test a peer command, you must include a
    `sourceNodeId`.
    ```bash
@@ -247,15 +240,16 @@ The Ktor server in `LocalHttpServer.kt` defines the following routes:
    curl -X GET "http://localhost:8099/display?path=motion&sourceNodeId=test-node"
    ```
 
-6. **Monitor for Proof:**
+5. **Monitor for Proof:**
    Check `logcat` for logs confirming the action was received and executed correctly. Note: make
    sure you aren't reading a previous run's logcat. Clear the logcat if necessary.
    ```bash
    adb logcat -d DisplayActivity:I WebViewScreen:I *:S
    ```
 
-7. **Clean Up:**
-   Remove the port forwarding rule when you are finished.
+6. **Clean Up:**
+   Remove the port forwarding rule when you are finished. If the issue is still being debugged, skip
+   this step.
    ```bash
    adb forward --remove-all
    ```
@@ -263,61 +257,28 @@ The Ktor server in `LocalHttpServer.kt` defines the following routes:
 ### Additional Notes for Gemini
 
 * Don't be obsequious. The user's ideas aren't "wonderful" or "fantastic" or "brilliant". Don't use
-  phrases like "You are absolutely
-  right." or "My apologies" At most say (if it is true) "I can confirm that is a better plan."
-* A feature, bug fix, or refactor is never done until we have positive proof that it worked. This
-  means extra compile/run/tests. That is **always** worth it.
-
----
-
-## 9. Development Journal
-
-This section serves as a log of the current development state, goals, and challenges. It should be
-updated as work progresses.
-
-### 9.1. Goal
-
-To prove that a `WebView` in the app can use permission-gated APIs (like motion sensors) without a
-user click, by having the native code grant permissions and trigger the necessary JavaScript.
-
-### 9.2. Strategy
-
-The strategy is to add a text input box to the main `index.html` page. When text is entered, the
-JavaScript will use it as a `sourceNodeId` query parameter on its requests. This will simulate a
-request from a peer, causing the app's server to process the request locally instead of broadcasting
-it. This allows for end-to-end testing of the local display logic directly through the UI.
-
-### 9.3. Sticking Points
-
-Previous attempts by an automated agent failed due to:
-
-* Misunderstanding the core broadcast-vs-local execution logic.
-* Incorrectly using file modification tools.
-* Misinterpreting logs and incorrectly announcing success.
-* Failing to follow a step-by-step verification process.
-
-### 9.4. Core Principles for Verification
-
+  phrases like "You are absolutely right." or "My apologies" At most say (if it is true) "I can
+  confirm that is a better plan."
+* **Not done until proven**: A feature, bug fix, or refactor is never done until we have **positive
+  proof** that it worked. This means extra compile/run/tests. That is **always** worth it.
+* **Document any reverts**: If you ever do something then revert it, this is valuable information
+  and should be written down in this file so future gemini-cli doesn't repeat the same mistake.
+* **Bias towards leaving in Logging statements**: If you add logging to a function, and get the
+  issue resolved, consider leaving the logging lines in, in case the issue comes back or isn't fully
+  resolved.
 * **Absence of errors is not proof of success.** The only proof of success is an affirmative logcat
   message showing the expected behavior occurred.
 * **Utilize `adb` for control.** It is a reliable way to interact with the app.
 * **The process ID changes on every run.** Assume it has changed and filter logs accordingly.
 
-### 9.5. Progress on Automated Testing
+### Sticking Points
 
-* **Objective:** Achieve a fully automated, end-to-end test script that can be executed by the
-  `gemini-cli`.
-* **Initial Failures:** Early attempts to start the `BridgeService` directly from `adb` were
-  unsuccessful due to Android security policies (service not exported, background start
-  restrictions).
-* **Successful Refactoring:** To solve this, a testing hook was added to `MainActivity`. It now
-  checks for a boolean `auto_start` Intent extra, which allows it to bypass the UI and trigger the
-  service start sequence automatically. This brings the app to the foreground correctly while
-  maintaining automation. **STILL NEEDS TO BE VERIFIED**
-* **Process Improvement:** A series of incorrect assumptions during the testing phase led to the
-  creation of a "Core Mandate: The 'Prove-It' Workflow," which has been added to this document to
-  enforce a stricter, evidence-based development cycle.
-* **Current Status:** We have identified what we think is the correct `adb` command (
-  `adb shell am start -ez auto_start true`) to trigger the testing hook. The next step is to execute
-  this command and verify that it successfully launches the app and service without manual
-  interaction, finally clearing the path for the full end-to-end test.
+Previous attempts by an automated agent failed due to the following. Do not repeat the same
+mistakes. All strategies must be checked to avoid the following pitfalls:
+
+* **GUESSING WITHOUT EVIDENCE**: Gemini has a bad habit of guessing and coding. Don't do this.
+  Instead, take smaller evidence-backed steps.
+* Misunderstanding the core broadcast-vs-local execution logic.
+* Incorrectly using file modification tools.
+* Misinterpreting logs and incorrectly announcing success.
+* Failing to follow a step-by-step verification process.

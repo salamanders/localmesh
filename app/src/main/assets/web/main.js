@@ -101,3 +101,4 @@ function displayFolder(folderName) {
 updateStatus();
 fetchFolders();
 setInterval(updateStatus, 3000);
+console.log('LOCALMESH_SCRIPT_SUCCESS:root');

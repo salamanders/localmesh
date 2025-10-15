@@ -14,7 +14,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 
-
+/**
+ * A self-contained, full-screen Composable for displaying a web page.
+ * This is a Jetpack Compose UI component, not a complete Android Activity.
+ * It wraps a WebView to render web content passed via the [url] parameter.
+ *
+ * Auto-grants all permissions, logs all errors.
+ */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun WebViewScreen(url: String) {

@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
     <meta charset=utf-8>
-    <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval' data: blob:;">
+    <meta content="default-src * 'unsafe-inline' 'unsafe-eval' data: blob:;"
+          http-equiv="Content-Security-Policy">
     <meta content="telephone=no" name="format-detection">
     <meta content="no" name="msapplication-tap-highlight">
     <meta content="user-scalable=no, initial-scale=1, width=device-width" name="viewport">
@@ -28,13 +29,11 @@
 <script type="text/javascript">
     const videoSources = [
         'disco_01.mp4',
-        /*
         'disco_02.mp4',
         'disco_03.mp4',
         'disco_04.mp4',
         'disco_05.mp4',
         'disco_06.mp4'
-        */
     ];
 
     const videoContainer = document.body;
@@ -62,6 +61,9 @@
                 playRandomVideo();
             }
         });
+        video.addEventListener('error', (e) => {
+            console.error('Video Error:', e);
+        });
         videos.push(video);
         videoContainer.appendChild(video);
     });
@@ -79,8 +81,11 @@
         currentVideo.style.display = 'block';
         currentVideo.currentTime = 0; // Rewind to start
         currentVideo.addEventListener('ended', playRandomVideo);
-        currentVideo.play();
-        console.log('LOCALMESH_SCRIPT_SUCCESS:disco');
+        currentVideo.play()
+            .then(() => {
+                console.log('LOCALMESH_SCRIPT_SUCCESS:disco');
+            });
+
     }
 </script>
 </body>

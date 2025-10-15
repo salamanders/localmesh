@@ -35,7 +35,10 @@ object PermissionUtils {
                 )
                 permissionInfo.protection == android.content.pm.PermissionInfo.PROTECTION_DANGEROUS
             } catch (e: Exception) {
-                Log.e("PermissionUtils", "Failed to get permission info for $permissionName: ${e.message}")
+                Log.e(
+                    "PermissionUtils",
+                    "Failed to get permission info for $permissionName: ${e.message}"
+                )
                 false
             }
         }.toTypedArray()

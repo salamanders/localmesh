@@ -18,6 +18,7 @@ import info.benjaminhill.localmesh.LocalHttpServer
 import info.benjaminhill.localmesh.LogFileWriter
 import info.benjaminhill.localmesh.MainActivity
 import info.benjaminhill.localmesh.R
+import info.benjaminhill.localmesh.util.AssetManager
 import info.benjaminhill.localmesh.util.GlobalExceptionHandler.runCatchingWithLogging
 import info.benjaminhill.localmesh.util.PermissionUtils
 import io.ktor.http.parseUrlEncodedParameters
@@ -68,7 +69,9 @@ class BridgeService : Service() {
         Log.i(TAG, "onCreate() called")
         runCatchingWithLogging(::logError) {
             endpointName =
-                (('A'..'Z') + ('a'..'z') + ('0'..'9')).shuffled().take(5).joinToString("")
+                (('A'..'Z') + ('a'..'z') + ('0'..'9')).shuffled().take(5).joinToString("").also {
+                    Log.i(TAG, "This node is now named: $it")
+                }
             logFileWriter = LogFileWriter(applicationContext)
             if (!::localHttpServer.isInitialized) {
                 localHttpServer = LocalHttpServer(this, ::sendLogMessage, ::logError)
@@ -84,7 +87,7 @@ class BridgeService : Service() {
                     when (payload.type) {
                         Payload.Type.BYTES -> handleBytesPayload(payload)
                         Payload.Type.STREAM -> handleStreamPayload(payload)
-                        else -> sendLogMessage("Received unsupported payload type: ${payload.type}")
+                        else -> sendLogMessage("ERROR: Received unsupported payload type: ${payload.type}")
                     }
                 }
             }
@@ -120,19 +123,14 @@ class BridgeService : Service() {
     internal fun handleStreamPayload(payload: Payload) {
         val filename = incomingFilePayloads.remove(payload.id)
         if (filename == null) {
-            sendLogMessage("Received stream payload with unknown ID: ${payload.id}")
+            sendLogMessage("ERROR: Received stream payload with unknown ID: ${payload.id}")
             return
         }
         runCatchingWithLogging(::logError) {
-            val cacheDir = File(applicationContext.cacheDir, "web_cache").also { it.mkdirs() }
-            val file = File(cacheDir, filename)
-            file.parentFile?.mkdirs()
             payload.asStream()?.asInputStream()?.use { inputStream ->
-                file.outputStream().use { outputStream ->
-                    inputStream.copyTo(outputStream)
-                }
+                AssetManager.saveFile(applicationContext, filename, inputStream)
             }
-            sendLogMessage("File received and cached: $filename")
+            sendLogMessage("File received and saved: $filename")
         }
     }
 

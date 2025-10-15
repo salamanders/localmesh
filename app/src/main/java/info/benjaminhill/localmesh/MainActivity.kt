@@ -16,6 +16,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import info.benjaminhill.localmesh.mesh.BridgeService
+import info.benjaminhill.localmesh.util.AssetManager
 import info.benjaminhill.localmesh.util.PermissionUtils
 
 /**
@@ -47,6 +48,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Copy all assets from the APK to writable storage on first run.
+        // This allows Ktor's `staticFiles` to serve them with range support.
+        AssetManager.unpack(this)
 
         // Check for a testing hook flag in the intent. This allows automated scripts
         // to bypass the UI and trigger the service start sequence directly.

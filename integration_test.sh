@@ -5,11 +5,21 @@ set -e
 
 # Define paths and variables.
 # Use ANDROID_HOME if it's set, otherwise default to a common location.
-SDK_ROOT="${ANDROID_HOME:-/home/jules/Android/sdk}"
+if [[ "$(uname)" == "Darwin" ]]; then
+  SDK_ROOT="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
+else
+  SDK_ROOT="${ANDROID_HOME:-/home/jules/Android/sdk}"
+fi
 ADB_PATH="$SDK_ROOT/platform-tools/adb"
 EMULATOR_PATH="$SDK_ROOT/emulator/emulator"
 AVD_NAME="arm_avd"
-animations=("disco" "eye" "motion" "equalizer" "snakes" "zap")
+if [ -n "$1" ]; then
+  animations=("$1")
+  echo "Testing single animation: $1"
+else
+  echo "Testing all animations..."
+  animations=($(find app/src/main/assets/web -mindepth 1 -maxdepth 1 -type d -exec basename {} \;))
+fi
 
 # --- Helper Functions ---
 
@@ -43,7 +53,7 @@ echo "Starting integration test for web animations..."
 # 1. Launch the emulator in the background.
 echo "Launching emulator '$AVD_NAME'..."
 # Use -no-window for headless execution.
-$EMULATOR_PATH -avd $AVD_NAME -no-window > /dev/null 2>&1 &
+# $EMULATOR_PATH -avd $AVD_NAME -no-window > /dev/null 2>&1 &
 
 # 2. Wait for the emulator to boot completely.
 echo "Waiting for emulator to boot..."

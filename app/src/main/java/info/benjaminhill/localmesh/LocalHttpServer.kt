@@ -1,9 +1,9 @@
 package info.benjaminhill.localmesh
 
 import android.content.Intent
-import android.content.res.AssetManager
 import info.benjaminhill.localmesh.mesh.BridgeService
 import info.benjaminhill.localmesh.mesh.HttpRequestWrapper
+import info.benjaminhill.localmesh.util.AssetManager
 import info.benjaminhill.localmesh.util.GlobalExceptionHandler.runCatchingWithLogging
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
@@ -16,13 +16,12 @@ import io.ktor.http.content.PartData
 import io.ktor.http.content.TextContent
 import io.ktor.http.content.forEachPart
 import io.ktor.http.formUrlEncode
-import io.ktor.http.fromFileExtension
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.createApplicationPlugin
 import io.ktor.server.application.install
-import io.ktor.server.cio.CIO as KtorCIO
 import io.ktor.server.engine.embeddedServer
+import io.ktor.server.http.content.staticFiles
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.partialcontent.PartialContent
 import io.ktor.server.plugins.statuspages.StatusPages
@@ -31,31 +30,15 @@ import io.ktor.server.request.path
 import io.ktor.server.request.receiveMultipart
 import io.ktor.server.request.receiveParameters
 import io.ktor.server.response.respond
-import io.ktor.server.response.respondFile
-import io.ktor.server.response.respondOutputStream
 import io.ktor.server.response.respondRedirect
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
-import io.ktor.util.cio.toByteReadChannel
 import io.ktor.utils.io.jvm.javaio.toInputStream
-import java.io.File
-import java.io.FileOutputStream
-import java.io.IOException
 import kotlinx.serialization.Serializable
+import java.io.File
+import io.ktor.server.cio.CIO as KtorCIO
 
-// Extension function to check if an asset path is a directory
-fun AssetManager.isDirectory(path: String): Boolean {
-    val normalizedPath = if (path.endsWith("/")) path.substring(0, path.length - 1) else path
-    // A path is a directory if it's not empty and we can list its contents.
-    // A file will throw an IOException, which list() catches and returns null.
-    // An empty directory will return an empty array, which is a valid directory.
-    return try {
-        this.list(normalizedPath)?.isNotEmpty() == true
-    } catch (_: IOException) {
-        false
-    }
-}
 
 @Serializable
 data class StatusResponse(
@@ -102,7 +85,8 @@ class LocalHttpServer(
         createApplicationPlugin(name = "P2PBroadcastInterceptor") {
             onCall { call ->
                 // --- Step 1: Check if the request should be broadcast ---
-                val isFromPeer = call.request.queryParameters["sourceNodeId"]?.takeUnless { it.isEmpty() }  != null
+                val isFromPeer =
+                    call.request.queryParameters["sourceNodeId"]?.takeUnless { it.isEmpty() } != null
                 val path = call.request.path()
 
                 if (isFromPeer || path !in BROADCAST_PATHS) {
@@ -152,13 +136,22 @@ class LocalHttpServer(
             }
         }
 
+        install(createApplicationPlugin(name = "RedirectFix") {
+            onCall { call ->
+                val rawPath = call.request.path()
+                logMessageCallback("RedirectFix: raw path: \"$rawPath\"")
+                val path = rawPath.trimStart('/')
+                logMessageCallback("RedirectFix: trimmed path: \"$path\"")
+                AssetManager.getRedirectPath(service.applicationContext, path)?.let {
+                    logMessageCallback("Redirecting to: \"$it\"")
+                    call.respondRedirect(it)
+                }
+            }
+        })
+
         routing {
             get("/folders") {
-                val assetList = service.applicationContext.assets.list("web")
-                    ?.filter { assetName ->
-                        service.applicationContext.assets.isDirectory("web/$assetName")
-                    } ?: emptyList()
-                call.respond(assetList)
+                call.respond(AssetManager.getFolders(service.applicationContext))
             }
             get("/status") {
                 // A simple report of the service's status and number of peers
@@ -221,22 +214,23 @@ class LocalHttpServer(
                 multipart.forEachPart { part ->
                     if (part is PartData.FileItem) {
                         val destinationPath = part.originalFileName ?: "unknown.bin"
+                        
                         val tempFile = File(
                             service.cacheDir,
-                            "upload_temp_${System.currentTimeMillis()}_${
-                                destinationPath.replace(
-                                    '/',
-                                    '_'
-                                )
-                            }"
+                            "upload_temp_${System.currentTimeMillis()}_${destinationPath.replace('/', '_')}"
                         )
                         part.provider().toInputStream().use { its ->
-                            FileOutputStream(tempFile).use { fos ->
+                            // Save to a temporary file first
+                            tempFile.outputStream().use { fos ->
                                 its.copyTo(fos)
                             }
+                            // Then send it to peers
+                            service.sendFile(tempFile, destinationPath)
+                            // And also save it locally using the new AssetManager method
+                            AssetManager.saveFile(service.applicationContext, destinationPath, tempFile.inputStream())
                         }
-                        // Use the BridgeService to send the file via a STREAM payload
-                        service.sendFile(tempFile, destinationPath)
+                        tempFile.delete() // Clean up the temporary file
+
                         responseSent = true
                         call.respond(
                             mapOf(
@@ -264,43 +258,26 @@ class LocalHttpServer(
                 logMessageCallback("Notification: File '$filename' was successfully received from $source.")
                 call.respond(mapOf("status" to HttpStatusCode.OK))
             }
-
+            
+            /*
+            // This was moved to the RedirectFix plugin to avoid consuming requests meant for static files.
             get("/{path...}") {
-                logMessageCallback("GET request for path: ${call.request.path()}")
-                var path = call.parameters.getAll("path")?.joinToString("/") ?: return@get
-                if (path.isBlank() || path == "/") {
-                    path = "index.html" // Default to index.html for root
+                val path = call.parameters.getAll("path")?.joinToString("/") ?: ""
+                logMessageCallback("Redirect check for path: \"$path\"")
+                AssetManager.getRedirectPath(service.applicationContext, path)?.let {
+                    logMessageCallback("Redirecting to: \"$it\"")
+                    call.respondRedirect(it)
                 }
+            }
+            */
 
-                val cacheDir = File(service.applicationContext.cacheDir, "web_cache")
-                val cachedFile = File(cacheDir, path)
-
-                if (cachedFile.exists() && cachedFile.isFile) {
-                    call.respondFile(cachedFile)
-                    return@get
-                }
-
-                var assetPath = "web/$path"
-                logMessageCallback("Checking if '$assetPath' is a directory.")
-                val isDir = service.applicationContext.assets.isDirectory(assetPath)
-                logMessageCallback("'$assetPath' is directory: $isDir")
-
-                if (isDir && !call.request.path().endsWith("/")) {
-                    call.respondRedirect(call.request.path() + "/")
-                    return@get
-                }
-
-                if (isDir) {
-                    assetPath = assetPath.removeSuffix("/") + "/index.html"
-                    logMessageCallback("Updated assetPath to '$assetPath'")
-                }
-
-                // Let StatusPages handle the IOException for not found
-                service.applicationContext.assets.open(assetPath).use { inputStream ->
-                    val contentType = ContentType.fromFileExtension(assetPath).firstOrNull()
-                        ?: ContentType.Application.OctetStream
-                    call.respond(inputStream.toByteReadChannel())
-                }
+            // Serve all static content from the unpacked assets directory
+            logMessageCallback("Serving static files from: ${AssetManager.getUnpackedFilesDir(service.applicationContext).absolutePath}")
+            staticFiles(
+                "/",
+                AssetManager.getUnpackedFilesDir(service.applicationContext)
+            ) {
+                default("index.html")
             }
         }
     }

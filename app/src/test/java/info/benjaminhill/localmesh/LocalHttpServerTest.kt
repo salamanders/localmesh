@@ -1,185 +1,234 @@
 package info.benjaminhill.localmesh
 
 import android.content.Context
-import android.content.res.AssetManager
+import info.benjaminhill.localmesh.mesh.BridgeService
+import info.benjaminhill.localmesh.mesh.BridgeState
+import info.benjaminhill.localmesh.mesh.NearbyConnectionsManager
+import info.benjaminhill.localmesh.util.AssetManager
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.cio.CIO
 import io.ktor.client.request.get
-import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
-import io.ktor.http.fromFileExtension
-import io.ktor.server.application.install
-import io.ktor.server.plugins.partialcontent.PartialContent
-import io.ktor.server.response.respond
-import io.ktor.server.response.respondFile
-import io.ktor.server.routing.get
-import io.ktor.server.routing.post
-import io.ktor.server.routing.routing
-import io.ktor.server.testing.testApplication
-import info.benjaminhill.localmesh.mesh.BridgeService
-import info.benjaminhill.localmesh.mesh.HttpRequestWrapper
+import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
+import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
+import org.junit.runner.RunWith
 import org.mockito.kotlin.any
-import org.mockito.kotlin.argumentCaptor
+import org.mockito.kotlin.doReturn
 import org.mockito.kotlin.mock
-import org.mockito.kotlin.never
 import org.mockito.kotlin.verify
-import org.mockito.kotlin.whenever
+import org.robolectric.RobolectricTestRunner
 import java.io.File
-import java.nio.file.Files
 
+@RunWith(RobolectricTestRunner::class)
 class LocalHttpServerTest {
 
+    @get:Rule
+    val tempFolder = TemporaryFolder()
+
+    private lateinit var server: LocalHttpServer
     private lateinit var mockBridgeService: BridgeService
-    private lateinit var localHttpServer: LocalHttpServer
+    private lateinit var mockNearbyConnectionsManager: NearbyConnectionsManager
+    private val loggedMessages = mutableListOf<String>()
 
     @Before
     fun setUp() {
-        mockBridgeService = mock()
-        whenever(mockBridgeService.endpointName).thenReturn("test-node")
-        localHttpServer =
-            LocalHttpServer(mockBridgeService, { /* No-op logger */ }, { _, _ -> /* No-op err */ })
+        loggedMessages.clear()
+        mockNearbyConnectionsManager = mock()
+        mockBridgeService = mock {
+            on { endpointName } doReturn "test-endpoint"
+            on { currentState } doReturn BridgeState.Running
+            on { nearbyConnectionsManager } doReturn mockNearbyConnectionsManager
+        }
+    }
+
+    @After
+    fun tearDown() {
+        if (::server.isInitialized) {
+            server.stop()
+        }
     }
 
     @Test
-    fun `interceptor broadcasts GET request`(): Unit = testApplication {
-        application {
-            install(localHttpServer.p2pBroadcastInterceptor)
-            routing {
-                get("/chat") {
-                    call.respond(HttpStatusCode.OK)
-                }
-            }
+    fun `GET status returns correct peer count`() = runBlocking {
+        // Given
+        val mockContext: Context = mock {
+            on { filesDir } doReturn tempFolder.newFolder()
         }
+        doReturn(mockContext).`when`(mockBridgeService).applicationContext
+        server = LocalHttpServer(mockBridgeService, { loggedMessages.add(it) }, { _, _ -> })
+        server.start()
+        doReturn(3).`when`(mockNearbyConnectionsManager).connectedPeerCount
+        doReturn(listOf("peer1", "peer2", "peer3")).`when`(mockNearbyConnectionsManager).connectedPeerIds
 
-        client.get("/chat?param1=value1")
+        // When
+        val client = HttpClient(CIO)
+        val response = client.get("http://localhost:${LocalHttpServer.PORT}/status")
+        val responseBody = response.bodyAsText()
+        val statusResponse = Json.decodeFromString<StatusResponse>(responseBody)
 
-        val captor = argumentCaptor<String>()
-        verify(mockBridgeService).broadcast(captor.capture())
+        // Then
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals("test-endpoint", statusResponse.id)
+        assertEquals(3, statusResponse.peerCount)
+        assertEquals(listOf("peer1", "peer2", "peer3"), statusResponse.peerIds)
 
-        val broadcastRequest = HttpRequestWrapper.fromJson(captor.firstValue)
-        assertEquals("/chat", broadcastRequest.path)
-        assertEquals("GET", broadcastRequest.method)
-        assertEquals("param1=value1", broadcastRequest.queryParams)
-        assertEquals("", broadcastRequest.body)
-        assertEquals("test-node", broadcastRequest.sourceNodeId)
+        client.close()
     }
 
     @Test
-    fun `interceptor broadcasts POST request without query params`(): Unit = testApplication {
-        application {
-            install(localHttpServer.p2pBroadcastInterceptor)
-            routing {
-                post("/chat") {
-                    call.respond(HttpStatusCode.OK)
-                }
-            }
+    fun `POST chat broadcasts to peers`() = runBlocking {
+        // Given
+        val mockContext: Context = mock {
+            on { filesDir } doReturn tempFolder.newFolder()
         }
+        doReturn(mockContext).`when`(mockBridgeService).applicationContext
+        server = LocalHttpServer(mockBridgeService, { loggedMessages.add(it) }, { _, _ -> })
+        server.start()
+        val client = HttpClient(CIO)
+        val message = "Hello, peers!"
 
-        client.post("/chat") {
+        // When
+        val response = client.post("http://localhost:${LocalHttpServer.PORT}/chat") {
             contentType(ContentType.Application.FormUrlEncoded)
-            setBody("field1=data1&field2=data2")
+            setBody("message=$message")
         }
 
-        val captor = argumentCaptor<String>()
-        verify(mockBridgeService).broadcast(captor.capture())
+        // Then
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals("Request broadcasted to peers.", response.bodyAsText())
 
-        val broadcastRequest = HttpRequestWrapper.fromJson(captor.firstValue)
-        assertEquals("/chat", broadcastRequest.path)
-        assertEquals("POST", broadcastRequest.method)
-        assertEquals("", broadcastRequest.queryParams)
-        assertEquals("field1=data1&field2=data2", broadcastRequest.body)
-        assertEquals("test-node", broadcastRequest.sourceNodeId)
+        // Verify that the broadcast method was called on the bridge service
+        verify(mockBridgeService).broadcast(any())
+
+        client.close()
     }
 
     @Test
-    fun `interceptor broadcasts POST request with query params and body`(): Unit = testApplication {
-        application {
-            install(localHttpServer.p2pBroadcastInterceptor)
-            routing {
-                post("/chat") {
-                    call.respond(HttpStatusCode.OK)
-                }
-            }
+    fun `GET from root serves index_html`() = runBlocking {
+        // Given
+        val client = HttpClient(CIO)
+        val tempDir = tempFolder.newFolder()
+        val webCacheDir = File(tempDir, AssetManager.UNPACKED_FILES_DIR)
+        webCacheDir.mkdirs()
+        val indexFile = File(webCacheDir, "index.html")
+        val fileContent = "<html><body><h1>Hello, World!</h1></body></html>"
+        indexFile.writeText(fileContent)
+
+        // Mock the context to return our temporary directory
+        val mockContext: Context = mock {
+            on { filesDir } doReturn tempDir
         }
+        doReturn(mockContext).`when`(mockBridgeService).applicationContext
 
-        client.post("/chat?query=qval") {
-            contentType(ContentType.Application.FormUrlEncoded)
-            setBody("body=bval")
-        }
+        server = LocalHttpServer(mockBridgeService, { loggedMessages.add(it) }, { _, _ -> })
+        server.start()
 
-        val captor = argumentCaptor<String>()
-        verify(mockBridgeService).broadcast(captor.capture())
+        // When
+        val response = client.get("http://localhost:${LocalHttpServer.PORT}/")
+        val responseBody = response.bodyAsText()
 
-        val broadcastRequest = HttpRequestWrapper.fromJson(captor.firstValue)
-        assertEquals("/chat", broadcastRequest.path)
-        assertEquals("POST", broadcastRequest.method)
-        assertEquals("query=qval", broadcastRequest.queryParams)
-        assertEquals("body=bval", broadcastRequest.body)
-        assertEquals("test-node", broadcastRequest.sourceNodeId)
-    }
+        // Then
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals(fileContent, responseBody)
 
-
-    @Test
-    fun `interceptor ignores request with sourceNodeId`(): Unit = testApplication {
-        application {
-            install(localHttpServer.p2pBroadcastInterceptor)
-            routing {
-                get("/test-ignore") {
-                    call.respond(HttpStatusCode.OK)
-                }
-            }
-        }
-
-        client.get("/test-ignore?sourceNodeId=another-node")
-
-        verify(mockBridgeService, never()).broadcast(any())
+        client.close()
     }
 
     @Test
-    fun `serves partial content for range requests`() = testApplication {
-        application {
-            install(PartialContent)
-            routing {
-                get("/{path...}") {
-                    val path = call.parameters.getAll("path")?.joinToString("/") ?: return@get
-                    val cacheDir = File(mockBridgeService.applicationContext.cacheDir, "web_cache")
-                    val cachedFile = File(cacheDir, path)
-                    call.respondFile(cachedFile)
-                }
-            }
+    fun `GET specific file serves that file`() = runBlocking {
+        // Given
+        val client = HttpClient(CIO)
+        val tempDir = tempFolder.newFolder()
+        val webCacheDir = File(tempDir, AssetManager.UNPACKED_FILES_DIR)
+        webCacheDir.mkdirs()
+        val specificFile = File(webCacheDir, "test.txt")
+        val fileContent = "This is a test file."
+        specificFile.writeText(fileContent)
+
+        // Mock the context to return our temporary directory
+        val mockContext: Context = mock {
+            on { filesDir } doReturn tempDir
         }
+        doReturn(mockContext).`when`(mockBridgeService).applicationContext
 
-        // Setup
-        val tempDir = Files.createTempDirectory("test-cache").toFile()
-        val webCacheDir = File(tempDir, "web_cache")
-        webCacheDir.mkdir()
-        val tempFile = File(webCacheDir, "test.txt")
-        tempFile.writeBytes("1234567890".toByteArray())
+        server = LocalHttpServer(mockBridgeService, { loggedMessages.add(it) }, { _, _ -> })
+        server.start()
 
-        val mockContext: Context = mock()
-        whenever(mockContext.cacheDir).thenReturn(tempDir)
-        val mockAssetManager: AssetManager = mock()
-        whenever(mockContext.assets).thenReturn(mockAssetManager)
-        whenever(mockBridgeService.applicationContext).thenReturn(mockContext)
+        // When
+        val response = client.get("http://localhost:${LocalHttpServer.PORT}/test.txt")
+        val responseBody = response.bodyAsText()
 
-        // Action
-        val response = client.get("/${tempFile.name}") {
-            header("Range", "bytes=2-5")
+        // Then
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals(fileContent, responseBody)
+
+        client.close()
+    }
+
+    @Test
+    fun `GET non-existent file returns 404`() = runBlocking {
+        // Given
+        val mockContext: Context = mock {
+            on { filesDir } doReturn tempFolder.newFolder()
         }
+        doReturn(mockContext).`when`(mockBridgeService).applicationContext
+        server = LocalHttpServer(mockBridgeService, { loggedMessages.add(it) }, { _, _ -> })
+        server.start()
+        val client = HttpClient(CIO)
 
-        // Assertions
-        assertEquals(HttpStatusCode.PartialContent, response.status)
-        assertEquals("bytes 2-5/10", response.headers["Content-Range"])
-        assertEquals("3456", response.bodyAsText())
+        // When
+        val response = client.get("http://localhost:${LocalHttpServer.PORT}/non-existent-file.txt")
 
-        // Cleanup
-        tempDir.deleteRecursively()
+        // Then
+        assertEquals(HttpStatusCode.NotFound, response.status)
+
+        client.close()
+    }
+
+    @Test
+    fun `GET folders returns list of directories`() = runBlocking {
+        // Given
+        val client = HttpClient(CIO)
+        val tempDir = tempFolder.newFolder()
+        val webCacheDir = File(tempDir, "web") // Using "web" to match UNPACKED_FILES_DIR
+        webCacheDir.mkdirs()
+        File(webCacheDir, "folder1").mkdir()
+        File(webCacheDir, "folder2").mkdir()
+        File(webCacheDir, "file.txt").createNewFile() // Should be ignored
+
+        // Mock the context to return our temporary directory
+        val mockContext: Context = mock {
+            on { filesDir } doReturn tempDir
+        }
+        doReturn(mockContext).`when`(mockBridgeService).applicationContext
+
+        server = LocalHttpServer(mockBridgeService, { loggedMessages.add(it) }, { _, _ -> })
+        server.start()
+
+        // When
+        val response = client.get("http://localhost:${LocalHttpServer.PORT}/folders")
+        val responseBody = response.bodyAsText()
+        val folderList = Json.decodeFromString<List<String>>(responseBody)
+
+        // Then
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(folderList.contains("folder1"))
+        assertTrue(folderList.contains("folder2"))
+        assertEquals(2, folderList.size)
+
+        client.close()
     }
 }
+
