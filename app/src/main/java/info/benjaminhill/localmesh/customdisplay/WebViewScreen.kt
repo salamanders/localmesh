@@ -23,10 +23,11 @@ import androidx.compose.ui.viewinterop.AndroidView
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-fun WebViewScreen(url: String) {
+fun WebViewScreen(url: String, onWebViewReady: (WebView) -> Unit = {}) {
     AndroidView(
         factory = { context ->
             WebView(context).apply {
+                onWebViewReady(this)
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
                 settings.displayZoomControls = false

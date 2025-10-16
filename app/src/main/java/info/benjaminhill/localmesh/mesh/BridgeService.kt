@@ -9,6 +9,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
 import android.net.wifi.WifiManager
+import android.os.Binder
 import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
@@ -28,6 +29,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * The central foreground service that orchestrates the entire P2P bridge.
@@ -55,6 +57,8 @@ class BridgeService : Service() {
 
     internal lateinit var nearbyConnectionsManager: NearbyConnectionsManager
     internal lateinit var localHttpServer: LocalHttpServer
+    private lateinit var heartbeatManager: HeartbeatManager
+
     lateinit var endpointName: String
         internal set
 
@@ -63,6 +67,24 @@ class BridgeService : Service() {
 
     internal val incomingFilePayloads = ConcurrentHashMap<Long, String>()
     internal var ioDispatcher: CoroutineDispatcher = Dispatchers.IO
+
+    // Heartbeat tracking
+    @Volatile
+    var serviceStartTime = 0L
+    private val _lastP2pMessageTime = AtomicLong(0L)
+    var lastP2pMessageTime: Long
+        get() = _lastP2pMessageTime.get()
+        private set(value) {
+            _lastP2pMessageTime.set(value)
+        }
+
+    private val _lastWebViewReportTime = AtomicLong(0L)
+    var lastWebViewReportTime: Long
+        get() = _lastWebViewReportTime.get()
+        private set(value) {
+            _lastWebViewReportTime.set(value)
+        }
+
 
     override fun onCreate() {
         super.onCreate()
@@ -73,6 +95,7 @@ class BridgeService : Service() {
                     Log.i(TAG, "This node is now named: $it")
                 }
             logFileWriter = LogFileWriter(applicationContext)
+
             if (!::localHttpServer.isInitialized) {
                 localHttpServer = LocalHttpServer(this, ::sendLogMessage, ::logError)
             }
@@ -91,6 +114,10 @@ class BridgeService : Service() {
                     }
                 }
             }
+            if (!::heartbeatManager.isInitialized) {
+                heartbeatManager = HeartbeatManager(this)
+            }
+
             Log.i(TAG, "onCreate() finished successfully")
         } ?: run {
             sendLogMessage("FATAL: Service crashed on create.")
@@ -99,6 +126,7 @@ class BridgeService : Service() {
     }
 
     internal fun handleBytesPayload(payload: Payload) {
+        lastP2pMessageTime = System.currentTimeMillis()
         runCatchingWithLogging(::logError) {
             val jsonString = payload.asBytes()!!.toString(Charsets.UTF_8)
             val wrapper = HttpRequestWrapper.fromJson(jsonString)
@@ -134,8 +162,14 @@ class BridgeService : Service() {
         }
     }
 
-    override fun onBind(intent: Intent): IBinder? {
-        return null
+    inner class BridgeBinder : Binder() {
+        fun getService(): BridgeService = this@BridgeService
+    }
+
+    private val binder = BridgeBinder()
+
+    override fun onBind(intent: Intent): IBinder {
+        return binder
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -175,6 +209,10 @@ class BridgeService : Service() {
             return
         }
         currentState = BridgeState.Starting
+        serviceStartTime = System.currentTimeMillis()
+        lastP2pMessageTime = serviceStartTime
+        lastWebViewReportTime = serviceStartTime
+
 
         // Start the local HTTP server immediately.
         if (!localHttpServer.start()) {
@@ -205,6 +243,7 @@ class BridgeService : Service() {
 
         startForeground(1, notification, FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
         nearbyConnectionsManager.start()
+        heartbeatManager.start()
         acquireWakeLock()
         currentState = BridgeState.Running
         sendLogMessage("Service started and running.")
@@ -237,6 +276,7 @@ class BridgeService : Service() {
         sendLogMessage("BridgeService.stop()")
         currentState = BridgeState.Stopping
 
+        heartbeatManager.stop()
         nearbyConnectionsManager.stop()
         localHttpServer.stop()
         releaseWakeLock()
@@ -245,6 +285,18 @@ class BridgeService : Service() {
 
         currentState = BridgeState.Idle
         sendLogMessage("Service stopped.")
+    }
+
+    fun restart() {
+        sendLogMessage("Restarting BridgeService...")
+        // TODO: This might have thread-safety issues.
+        stop()
+        // It seems there should be a small delay here to let things shut down.
+        start()
+    }
+
+    fun updateWebViewReportTime() {
+        lastWebViewReportTime = System.currentTimeMillis()
     }
 
     private fun acquireWakeLock() {
@@ -274,7 +326,7 @@ class BridgeService : Service() {
         logFileWriter.writeLog(message)
     }
 
-    private fun logError(message: String, throwable: Throwable?) {
+    internal fun logError(message: String, throwable: Throwable?) {
         if (throwable != null) {
             Log.e(TAG, message, throwable)
             logFileWriter.writeLog("ERROR: $message, ${throwable.message}")
