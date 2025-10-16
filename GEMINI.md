@@ -207,52 +207,50 @@ The Ktor server in `LocalHttpServer.kt` defines the following routes:
 
 ### Test Workflow
 
-1. **Build and Grant Permissions:**
-   Build a fresh debug APK. Then, install it using the `-g` flag, which automatically grants all
+1. **Build and Grant Permissions:** Build a fresh debug APK. Then, install it using the `-g` flag, which automatically grants all
    permissions declared in the manifest. This is the critical first step to enabling a UI-less
    startup.
-   ```bash
-   ./gradlew assembleDebug
-   adb install -r -g app/build/outputs/apk/debug/app-debug.apk
-   ```
-
-2. **Automated App Launch:**
-   Use `adb` to start the `MainActivity`, passing the special `auto_start` boolean extra. This flag
+2. **Automated App Launch:** Use `adb` to start the `MainActivity`, passing the special `auto_start` boolean extra. This flag
    is the testing hook that tells the activity to bypass the "Start Service" button and immediately
-   trigger the service launch sequence.
-   ```bash
-   adb shell am start -n info.benjaminhill.localmesh/.MainActivity --ez auto_start true
-   ```
-   The app will briefly flash on screen and then proceed directly to the main web UI, with the
+   trigger the service launch sequence. The app will briefly flash on screen and then proceed directly to the main web UI, with the
    `BridgeService` running in the background.
-
-3. **Forward the Device Port:**
-   Forward the device's port to your local machine to enable `curl` commands.
-   ```bash
-   adb forward tcp:8099 tcp:8099
-   ```
-
-4. **Trigger an Action via API:**
-   Use `curl` to send commands to the app's local server. To test a peer command, you must include a
+3. **Forward the Device Port:** Forward the device's port to your local machine to enable `curl` commands.
+4. **Trigger an Action via API:** Use `curl` to send commands to the app's local server. To test a peer command, you must include a
    `sourceNodeId`.
-   ```bash
-   # Example: Trigger the 'motion' display on the connected device
-   curl -X GET "http://localhost:8099/display?path=motion&sourceNodeId=test-node"
-   ```
-
-5. **Monitor for Proof:**
-   Check `logcat` for logs confirming the action was received and executed correctly. Note: make
+5. **Monitor for Proof:** Check `logcat` for logs confirming the action was received and executed correctly. Note: make
    sure you aren't reading a previous run's logcat. Clear the logcat if necessary.
-   ```bash
-   adb logcat -d DisplayActivity:I WebViewScreen:I *:S
-   ```
-
 6. **Clean Up:**
-   Remove the port forwarding rule when you are finished. If the issue is still being debugged, skip
-   this step.
-   ```bash
-   adb forward --remove-all
-   ```
+   Remove the port forwarding rule when you are finished. If the issue is still being debugged, skip this step.
+
+```bash
+./gradlew assembleDebug
+adb install -r -g app/build/outputs/apk/debug/app-debug.apk
+adb shell am start -n info.benjaminhill.localmesh/.MainActivity --ez auto_start true
+adb forward tcp:8099 tcp:8099
+# Example: Trigger the 'motion' display on the connected device
+curl -X GET "http://localhost:8099/display?path=motion&sourceNodeId=test-node"
+adb logcat -d DisplayActivity:I WebViewScreen:I *:S
+# adb forward --remove-all
+```
+
+## 9. Automated Testing
+
+* Objective: Achieve a fully automated, end-to-end test script that can be executed by the
+  gemini-cli.
+* Initial Failures: Early attempts to start the BridgeService directly from adb were
+  unsuccessful due to Android security policies (service not exported, background start
+  restrictions).
+* Successful Refactoring: To solve this, a testing hook was added to MainActivity. It now
+  checks for a boolean auto_start Intent extra, which allows it to bypass the UI and trigger the
+  service start sequence automatically. This brings the app to the foreground correctly while
+  maintaining automation. **STILL NEEDS TO BE VERIFIED**
+* Process Improvement: A series of incorrect assumptions during the testing phase led to the
+  creation of a "Core Mandate: The 'Prove-It' Workflow," which has been added to this document to
+  enforce a stricter, evidence-based development cycle.
+* Current Status: We have identified what we think is the correct adb command (
+  `adb shell am start -ez auto_start true`) to trigger the testing hook. The next step is to execute
+  this command and verify that it successfully launches the app and service without manual
+  interaction, finally clearing the path for the full end-to-end test.
 
 ### Additional Notes for Gemini
 
