@@ -1,7 +1,6 @@
 package info.benjaminhill.localmesh
 
 import android.content.ComponentName
-import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.ApplicationInfo
@@ -18,6 +17,13 @@ import androidx.compose.runtime.mutableStateOf
 import info.benjaminhill.localmesh.customdisplay.WebViewScreen
 import info.benjaminhill.localmesh.mesh.BridgeService
 
+/**
+ * A reusable, single-instance Activity that hosts the primary WebView UI.
+ *
+ * It is launched by both local user action and remote peer commands (via `onNewIntent`).
+ * Its only role is to render web content; all application logic resides in the Ktor server and web frontend.
+ * A heartbeat reports WebView health back to the BridgeService.
+ */
 class DisplayActivity : ComponentActivity() {
 
     private val pathState = mutableStateOf<String?>(null)
@@ -51,7 +57,8 @@ class DisplayActivity : ComponentActivity() {
         }
 
         setContent {
-            WebViewScreen(url = "http://localhost:${LocalHttpServer.PORT}/${pathState.value}",
+            WebViewScreen(
+                url = "http://localhost:${LocalHttpServer.PORT}/${pathState.value}",
                 onWebViewReady = { webView ->
                     this@DisplayActivity.webView = webView
                 }
@@ -59,7 +66,7 @@ class DisplayActivity : ComponentActivity() {
         }
 
         val intent = Intent(this, BridgeService::class.java)
-        bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        bindService(intent, serviceConnection, BIND_AUTO_CREATE)
     }
 
     override fun onDestroy() {
@@ -103,7 +110,10 @@ class DisplayActivity : ComponentActivity() {
                     bridgeService?.updateWebViewReportTime()
                     Log.d(TAG, "WebView heartbeat sent.")
                 } else {
-                    Log.w(TAG, "WebView heartbeat failed: JavaScript evaluation did not return 'ok'.")
+                    Log.w(
+                        TAG,
+                        "WebView heartbeat failed: JavaScript evaluation did not return 'ok'."
+                    )
                 }
             }
             handler.postDelayed(this, WEBVIEW_HEARTBEAT_INTERVAL_MS)
@@ -116,4 +126,3 @@ class DisplayActivity : ComponentActivity() {
         private const val TAG = "DisplayActivity"
     }
 }
-

@@ -20,18 +20,18 @@ object AssetManager {
     const val INCLUDED_ASSET_NAME = "web"
     const val UNPACKED_FILES_DIR = "web"
 
-    /** Copies the defaults to the folder, only if they don't already exist (safe to run every startup, won't clobber distributed files */
+    /** Copies the defaults to the folder, only if they don't already exist (safe to run every startup, won't clobber distributed files) */
     fun unpack(context: Context) {
-        val staticDir = getUnpackedFilesDir(context)
+        val staticDir = getFilesDir(context)
         Log.d(TAG, "Unpacking assets to ${staticDir.absolutePath}")
         copyAssetDir(context, assetDir = INCLUDED_ASSET_NAME, destDir = staticDir)
     }
 
-    fun getUnpackedFilesDir(context: Context): File =
+    fun getFilesDir(context: Context): File =
         File(context.filesDir, UNPACKED_FILES_DIR)
 
     fun getFolders(context: Context): List<String> {
-        val staticWebDir = getUnpackedFilesDir(context)
+        val staticWebDir = getFilesDir(context)
         return staticWebDir.listFiles()
             ?.filter { it.isDirectory }
             ?.map { it.name }
@@ -39,7 +39,7 @@ object AssetManager {
     }
 
     fun saveFile(context: Context, destinationPath: String, inputStream: InputStream) {
-        val destFile = File(getUnpackedFilesDir(context), destinationPath)
+        val destFile = File(getFilesDir(context), destinationPath)
         destFile.parentFile?.mkdirs()
         FileOutputStream(destFile).use { outputStream ->
             inputStream.copyTo(outputStream)
@@ -51,14 +51,16 @@ object AssetManager {
         if (path.isEmpty()) {
             return null
         }
-        val file = File(getUnpackedFilesDir(context), path)
-        if (file.isDirectory && !path.endsWith("/")) {
-            return "$path/"
+        val pathNoSlash = path.trim().removeSuffix("/")
+        val file = File(getFilesDir(context), pathNoSlash)
+        if (file.isDirectory && File(file, "index.html").exists()) {
+            return "$pathNoSlash/index.html"
         }
-        if (file.isDirectory && path.endsWith("/")) {
-            if (File(file, "index.html").exists()) {
-                return "${path}index.html"
-            }
+        if (file.isDirectory) {
+            Log.e(
+                TAG,
+                "Tried to navigate to a directory without an index.html? ${file.absolutePath}"
+            )
         }
         return null
     }

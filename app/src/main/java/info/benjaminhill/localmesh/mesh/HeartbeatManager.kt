@@ -1,6 +1,5 @@
 package info.benjaminhill.localmesh.mesh
 
-import android.util.Log
 import info.benjaminhill.localmesh.util.GlobalExceptionHandler.runCatchingWithLogging
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
@@ -24,8 +23,8 @@ class HeartbeatManager(
             return
         }
         scheduler = Executors.newSingleThreadScheduledExecutor()
-        val initialDelay = Random.nextLong(1, 180)
-        scheduler.scheduleAtFixedRate(
+        val initialDelay = Random.nextLong(60, 180)
+        scheduler.scheduleWithFixedDelay(
             this::runChecks,
             initialDelay,
             CHECK_INTERVAL_MINUTES,
@@ -117,8 +116,7 @@ class HeartbeatManager(
 
     companion object {
         private const val CHECK_INTERVAL_MINUTES = 5L
-        private const val FIVE_MINUTES_MS = 5 * 60 * 1000L
+        private const val FIVE_MINUTES_MS = CHECK_INTERVAL_MINUTES * 60 * 1000L
         private const val WEBVIEW_TIMEOUT_MS = 2 * 60 * 1000L
-        private const val TAG = "HeartbeatManager"
     }
 }

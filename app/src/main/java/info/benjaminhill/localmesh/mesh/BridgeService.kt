@@ -88,8 +88,12 @@ class BridgeService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        Log.i(TAG, "onCreate() called")
+        Log.i(TAG, "BridgeService.onCreate() called")
         runCatchingWithLogging(::logError) {
+            if (!::heartbeatManager.isInitialized) {
+                heartbeatManager = HeartbeatManager(this)
+            }
+
             endpointName =
                 (('A'..'Z') + ('a'..'z') + ('0'..'9')).shuffled().take(5).joinToString("").also {
                     Log.i(TAG, "This node is now named: $it")
@@ -103,7 +107,7 @@ class BridgeService : Service() {
                 nearbyConnectionsManager = NearbyConnectionsManager(
                     context = this,
                     endpointName = endpointName,
-                    peerCountUpdateCallback = { /* No-op, web UI will poll /status */ },
+                    // peerCountUpdateCallback = { /* No-op, web UI will poll /status */ },
                     logMessageCallback = ::sendLogMessage,
                     logErrorCallback = ::logError
                 ) { _, payload ->
@@ -113,9 +117,6 @@ class BridgeService : Service() {
                         else -> sendLogMessage("ERROR: Received unsupported payload type: ${payload.type}")
                     }
                 }
-            }
-            if (!::heartbeatManager.isInitialized) {
-                heartbeatManager = HeartbeatManager(this)
             }
 
             Log.i(TAG, "onCreate() finished successfully")

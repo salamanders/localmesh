@@ -214,10 +214,15 @@ class LocalHttpServer(
                 multipart.forEachPart { part ->
                     if (part is PartData.FileItem) {
                         val destinationPath = part.originalFileName ?: "unknown.bin"
-                        
+
                         val tempFile = File(
                             service.cacheDir,
-                            "upload_temp_${System.currentTimeMillis()}_${destinationPath.replace('/', '_')}"
+                            "upload_temp_${System.currentTimeMillis()}_${
+                                destinationPath.replace(
+                                    '/',
+                                    '_'
+                                )
+                            }"
                         )
                         part.provider().toInputStream().use { its ->
                             // Save to a temporary file first
@@ -227,7 +232,11 @@ class LocalHttpServer(
                             // Then send it to peers
                             service.sendFile(tempFile, destinationPath)
                             // And also save it locally using the new AssetManager method
-                            AssetManager.saveFile(service.applicationContext, destinationPath, tempFile.inputStream())
+                            AssetManager.saveFile(
+                                service.applicationContext,
+                                destinationPath,
+                                tempFile.inputStream()
+                            )
                         }
                         tempFile.delete() // Clean up the temporary file
 
@@ -258,7 +267,7 @@ class LocalHttpServer(
                 logMessageCallback("Notification: File '$filename' was successfully received from $source.")
                 call.respond(mapOf("status" to HttpStatusCode.OK))
             }
-            
+
             /*
             // This was moved to the RedirectFix plugin to avoid consuming requests meant for static files.
             get("/{path...}") {
@@ -272,10 +281,10 @@ class LocalHttpServer(
             */
 
             // Serve all static content from the unpacked assets directory
-            logMessageCallback("Serving static files from: ${AssetManager.getUnpackedFilesDir(service.applicationContext).absolutePath}")
+            logMessageCallback("Serving static files from: ${AssetManager.getFilesDir(service.applicationContext).absolutePath}")
             staticFiles(
                 "/",
-                AssetManager.getUnpackedFilesDir(service.applicationContext)
+                AssetManager.getFilesDir(service.applicationContext)
             ) {
                 default("index.html")
             }

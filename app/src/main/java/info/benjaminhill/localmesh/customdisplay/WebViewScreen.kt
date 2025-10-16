@@ -37,8 +37,7 @@ fun WebViewScreen(url: String, onWebViewReady: (WebView) -> Unit = {}) {
                     override fun onPageFinished(view: WebView?, url: String?) {
                         super.onPageFinished(view, url)
                         // Check if the magic function exists, and if so, call it.
-                        val script = "typeof autoStartInWebView === 'function'"
-                        view?.evaluateJavascript(script) { result ->
+                        view?.evaluateJavascript("typeof autoStartInWebView === 'function'") { result ->
                             if ("true" == result) {
                                 Log.i(
                                     "WebViewScreen",

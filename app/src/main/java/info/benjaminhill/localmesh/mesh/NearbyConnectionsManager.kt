@@ -22,7 +22,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.UUID
 import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.math.pow
 
@@ -46,8 +45,8 @@ import kotlin.math.pow
  */
 class NearbyConnectionsManager(
     private val context: Context,
-    private val endpointName: String = UUID.randomUUID().toString().substring(0, 4),
-    private val peerCountUpdateCallback: (Int) -> Unit,
+    private val endpointName: String,
+    // private val peerCountUpdateCallback: (Int) -> Unit,
     private val logMessageCallback: (String) -> Unit,
     private val logErrorCallback: (String, Throwable) -> Unit,
     private val payloadReceivedCallback: (endpointId: String, payload: Payload) -> Unit,
@@ -144,7 +143,27 @@ class NearbyConnectionsManager(
         }
 
         override fun onPayloadTransferUpdate(endpointId: String, update: PayloadTransferUpdate) {
-            // For now, we just log this.
+            runCatchingWithLogging({ msg, err ->
+                logErrorCallback(msg, err ?: Exception(msg))
+            }) {
+                when (update.status) {
+                    PayloadTransferUpdate.Status.SUCCESS ->
+                        logMessageCallback("SUCCESS: Payload ${update.payloadId} transfer to $endpointId complete.")
+
+                    PayloadTransferUpdate.Status.FAILURE ->
+                        logErrorCallback(
+                            "FAILURE: Payload ${update.payloadId} transfer to $endpointId failed.",
+                            Exception("PayloadTransferUpdate Failure")
+                        )
+
+                    PayloadTransferUpdate.Status.CANCELED ->
+                        logMessageCallback("CANCELED: Payload ${update.payloadId} transfer to $endpointId was canceled.")
+
+                    PayloadTransferUpdate.Status.IN_PROGRESS -> {
+                        // Ignoring for now to keep logs clean. This is where you'd update a progress bar.
+                    }
+                }
+            }
         }
     }
 
@@ -167,7 +186,7 @@ class NearbyConnectionsManager(
                     logMessageCallback("Connected to $endpointId")
                     connectedEndpoints.add(endpointId)
                     retryCounts.remove(endpointId) // Clear on success
-                    peerCountUpdateCallback(connectedEndpoints.size)
+                    // peerCountUpdateCallback(connectedEndpoints.size)
                 } else {
                     logMessageCallback("Connection to $endpointId failed: ${result.status.statusCode}")
                     scheduleRetry(endpointId, "connection result") {
@@ -179,7 +198,7 @@ class NearbyConnectionsManager(
             override fun onDisconnected(endpointId: String) {
                 logMessageCallback("onDisconnected: $endpointId")
                 connectedEndpoints.remove(endpointId)
-                peerCountUpdateCallback(connectedEndpoints.size)
+                // peerCountUpdateCallback(connectedEndpoints.size)
             }
         }
 
