@@ -30,6 +30,28 @@ import kotlinx.coroutines.launch
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
+/**
+ * The central foreground service that orchestrates the entire P2P bridge.
+ *
+ * ## What it does
+ * - Manages the lifecycle of the `NearbyConnectionsManager`, the `LocalHttpServer`, and the `ServiceHardener`.
+ * - Acts as a bridge, forwarding messages between the network layer (`NearbyConnectionsManager`) and
+ *   the application logic layer (`LocalHttpServer`).
+ * - Handles incoming `BridgeAction` intents from the UI to start and stop the service.
+ *
+ * ## What it doesn't do
+ * - It does not contain the application's core API logic; that resides in `LocalHttpServer`.
+ * - It does not directly manage peer connections; that is delegated to `NearbyConnectionsManager`.
+ * - It does not contain the hardening logic; that is delegated to `ServiceHardener`.
+ *
+ * ## Comparison to other classes
+ * - **[LocalHttpServer]:** `BridgeService` manages the lifecycle of the server, but the server itself
+ *   contains all the Ktor routing and application logic.
+ * - **[NearbyConnectionsManager]:** `BridgeService` owns and directs the `NearbyConnectionsManager`,
+ *   telling it when to start and stop and receiving payloads from it.
+ * - **[ServiceHardener]:** `BridgeService` owns and directs the `ServiceHardener`, which manages
+ *  the service's lifecycle and restarts it if it becomes unhealthy.
+ */
 class BridgeService : Service() {
     var currentState: BridgeState = BridgeState.Idle
         internal set
