@@ -77,6 +77,13 @@ class BridgeService : Service() {
             if (!::localHttpServer.isInitialized) {
                 localHttpServer = LocalHttpServer(this, logger)
             }
+            if (!::topologyOptimizer.isInitialized) {
+                topologyOptimizer = TopologyOptimizer(
+                    connectionsManagerProvider = { nearbyConnectionsManager },
+                    logger = logger,
+                    endpointName = endpointName
+                )
+            }
             if (!::nearbyConnectionsManager.isInitialized) {
                 nearbyConnectionsManager = NearbyConnectionsManager(
                     context = this,
@@ -90,13 +97,6 @@ class BridgeService : Service() {
                         }
                     },
                     topologyOptimizerCallback = topologyOptimizer
-                )
-            }
-            if (!::topologyOptimizer.isInitialized) {
-                topologyOptimizer = TopologyOptimizer(
-                    connectionsManager = nearbyConnectionsManager,
-                    logger = logger,
-                    endpointName = endpointName
                 )
             }
             logger.log("onCreate() finished successfully")
@@ -153,7 +153,7 @@ class BridgeService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        logger.log("onStartCommand() called with action: ${intent?.action}")
+        logger.log("BridgeService: onStartCommand() called with action: ${intent?.action}")
         when (intent?.action) {
             ACTION_START -> start()
             ACTION_STOP -> stop()

@@ -33,7 +33,7 @@ private const val NODE_HOP_COUNT_EXPIRY_MS = 120_000L // 2 minutes
  * - **[BridgeService]:** This class is a component managed by [BridgeService] to provide the self-optimizing functionality.
  */
 class TopologyOptimizer(
-    private val connectionsManager: NearbyConnectionsManager,
+    private val connectionsManagerProvider: () -> NearbyConnectionsManager,
     private val logger: AppLogger,
     private val endpointName: String,
 ) : TopologyOptimizerCallback {
@@ -65,7 +65,7 @@ class TopologyOptimizer(
     private fun CoroutineScope.startGossip() = launch {
         while (true) {
             delay(GOSSIP_INTERVAL_MS)
-            connectionsManager.broadcastPeerList()
+            connectionsManagerProvider().broadcastPeerList()
         }
     }
 
@@ -84,7 +84,7 @@ class TopologyOptimizer(
             return
         }
 
-        val myPeers = connectionsManager.connectedPeerIds.toSet()
+        val myPeers = connectionsManagerProvider().connectedPeerIds.toSet()
         if (myPeers.size < 2) {
             logger.log("Not enough peers to analyze for rewiring.")
             return
@@ -127,8 +127,8 @@ class TopologyOptimizer(
         }
 
         logger.log("PERFORMING REWIRING: Dropping redundant peer $redundantPeer and connecting to distant node $mostDistantNodeId (hop count: ${mostDistantNodeEntry.value.first})")
-        connectionsManager.disconnectFromEndpoint(redundantPeer)
-        connectionsManager.requestConnection(mostDistantNodeId)
+        connectionsManagerProvider().disconnectFromEndpoint(redundantPeer)
+        connectionsManagerProvider().requestConnection(mostDistantNodeId)
         lastRewireTimestamp = System.currentTimeMillis()
     }
 

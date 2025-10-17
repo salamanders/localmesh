@@ -25,6 +25,7 @@ import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import java.io.File
 import java.nio.charset.Charset
+import android.util.Log
 
 /**
  * Tests the file caching and display functionality of the application.
@@ -48,6 +49,9 @@ class CacheAndDisplayTest {
         // 1. Create a real BridgeService instance using Robolectric
         bridgeService = Robolectric.setupService(BridgeService::class.java)
 
+        // Ensure assets are unpacked for the server to serve them
+        AssetManager.unpack(ApplicationProvider.getApplicationContext())
+
         // 2. Replace the real NearbyConnectionsManager with a mock to prevent network calls
         mockNearbyConnectionsManager = mock()
         val ncmField = BridgeService::class.java.getDeclaredField("nearbyConnectionsManager")
@@ -56,9 +60,30 @@ class CacheAndDisplayTest {
 
         // 3. Get a reference to the LocalHttpServer created by the service
         localHttpServer = bridgeService.localHttpServer
-        // Manually ensure the server is started for the test
+        // Manually ensure the service is started for the test
         bridgeService.onStartCommand(Intent(BridgeService.Companion.ACTION_START), 0, 0)
 
+        // Wait for the server to be ready before proceeding with the test
+        runBlocking {
+            var connected = false
+            val client = HttpClient(CIO)
+            for (i in 1..10) {
+                try {
+                    System.out.println("CacheAndDisplayTest: Attempting to connect to server, attempt $i...")
+                    // Use a lightweight request to check server status
+                    client.get("http://localhost:${LocalHttpServer.PORT}/status")
+                    connected = true
+                    System.out.println("CacheAndDisplayTest: Successfully connected to server.")
+                    break
+                } catch (e: Exception) {
+                    System.err.println("CacheAndDisplayTest: Connection attempt $i failed: ${e.message}")
+                    if (i == 10) throw e // rethrow last exception
+                    kotlinx.coroutines.delay(200)
+                }
+            }
+            client.close()
+            Assert.assertTrue("Failed to connect to the local HTTP server.", connected)
+        }
 
         // 4. Define the cache directory and create a temporary file to "receive"
         val context: Context = ApplicationProvider.getApplicationContext()

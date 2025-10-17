@@ -210,12 +210,21 @@ class NearbyConnectionsManager(
 
     private val payloadCallback = object : PayloadCallback() {
         override fun onPayloadReceived(endpointId: String, payload: Payload) {
+            logger.log("onPayloadReceived: Received payload from $endpointId, type: ${payload.type}, size: ${payload.asBytes()?.size}")
             logger.runCatchingWithLogging {
-                if (payload.type != Payload.Type.BYTES || payload.asBytes()!!.isEmpty()) {
-                    logger.log("Received a non-forwardable or empty payload from $endpointId. Processing directly.")
+                if (payload.type != Payload.Type.BYTES) {
+                    logger.log("Received a non-BYTES payload from $endpointId. Processing directly.")
                     payloadReceivedCallback(endpointId, payload)
                     return@runCatchingWithLogging
                 }
+                val bytes = payload.asBytes()
+                if (bytes == null || bytes.isEmpty()) {
+                    logger.log("Received an empty BYTES payload from $endpointId. Ignoring.")
+                    payloadReceivedCallback(endpointId, payload)
+                    return@runCatchingWithLogging
+                }
+                val jsonString = bytes.toString(Charsets.UTF_8)
+                logger.log("Received BYTES payload content from $endpointId: $jsonString")
 
                 val networkMessage = unpackForwardablePayload(payload)
 
