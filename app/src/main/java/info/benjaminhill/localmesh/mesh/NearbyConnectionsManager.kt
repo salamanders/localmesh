@@ -17,13 +17,13 @@ import com.google.android.gms.nearby.connection.PayloadCallback
 import com.google.android.gms.nearby.connection.PayloadTransferUpdate
 import com.google.android.gms.nearby.connection.Strategy
 import info.benjaminhill.localmesh.util.AppLogger
-
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.nio.ByteBuffer
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -31,19 +31,19 @@ import kotlin.math.pow
 
 private const val TARGET_CONNECTIONS = 3
 private const val MAX_CONNECTIONS = 4
-private const val MESSAGE_ID_CACHE_SIZE = 100
-private const val GOSSIP_INTERVAL_MS = 30_000L
-private const val REWIRING_ANALYSIS_INTERVAL_MS = 60_000L
 
 private const val MESSAGE_TYPE_DATA: Byte = 0
 private const val MESSAGE_TYPE_GOSSIP_PEER_LIST: Byte = 1
 
-private data class UnpackedPayload(
+@Serializable
+private data class NetworkMessage(
     val type: Byte,
     val hopCount: Byte,
-    val messageId: UUID,
-    val data: ByteArray
+    val messageId: String, // UUID as string
+    val payloadContent: String // The HttpRequestWrapper serialized to JSON
 )
+
+
 
 /**
  * Manages all peer-to-peer network interactions using the Google Nearby Connections API.
@@ -63,11 +63,17 @@ private data class UnpackedPayload(
  * - **[BridgeService]:** This class is the workhorse for P2P communication, while `BridgeService` acts
  *   as the orchestrator, connecting this manager to the `LocalHttpServer`.
  */
+interface TopologyOptimizerCallback {
+    fun onDataPayloadReceived(hopCount: Int, sourceNodeId: String)
+    fun onGossipPayloadReceived(endpointId: String, theirPeers: List<String>)
+}
+
 class NearbyConnectionsManager(
     private val context: Context,
     private val endpointName: String,
     private val logger: AppLogger,
     private val payloadReceivedCallback: (endpointId: String, payload: Payload) -> Unit,
+    private val topologyOptimizerCallback: TopologyOptimizerCallback
 ) {
 
     private val connectionsClient: ConnectionsClient by lazy {
@@ -78,8 +84,6 @@ class NearbyConnectionsManager(
     private val connectedEndpoints = ConcurrentLinkedQueue<String>()
     private val retryCounts = mutableMapOf<String, Int>()
     private val seenMessageIds = ConcurrentHashMap<UUID, Long>()
-    private val neighborPeerLists = ConcurrentHashMap<String, List<String>>()
-    private val distantNodes = ConcurrentHashMap<String, Int>()
 
 
     fun start() {
@@ -87,19 +91,11 @@ class NearbyConnectionsManager(
         CoroutineScope(Dispatchers.IO).launch {
             startAdvertising()
             startDiscovery()
-            startGossip()
-            startRewiringAnalysis()
         }
     }
 
-    private fun CoroutineScope.startGossip() = launch {
-        while (true) {
-            delay(GOSSIP_INTERVAL_MS)
-            broadcastPeerList()
-        }
-    }
 
-    private fun broadcastPeerList() {
+    fun broadcastPeerList() {
         if (connectedEndpoints.isEmpty()) return
         val peers = connectedEndpoints.toList()
         val data = peers.joinToString(",").toByteArray(Charsets.UTF_8)
@@ -109,12 +105,6 @@ class NearbyConnectionsManager(
         sendPayload(peers, payload)
     }
 
-    private fun CoroutineScope.startRewiringAnalysis() = launch {
-        while (true) {
-            delay(REWIRING_ANALYSIS_INTERVAL_MS)
-            analyzeAndLogRewiringOpportunities()
-        }
-    }
 
     fun stop() {
         logger.log("NearbyConnectionsManager.stop()")
@@ -122,8 +112,6 @@ class NearbyConnectionsManager(
         connectedEndpoints.clear()
         retryCounts.clear()
         seenMessageIds.clear()
-        neighborPeerLists.clear()
-        distantNodes.clear()
     }
 
     fun sendPayload(endpointIds: List<String>, payload: Payload) =
@@ -155,8 +143,7 @@ class NearbyConnectionsManager(
     }
 
     /**
-     * Creates a payload with a prepended type, hop count, and UUID for tracking and forwarding.
-     * Format: [1-byte type][1-byte hopCount][16-byte UUID][original data]
+     * Creates a payload by serializing a `NetworkMessage` to JSON and then to `ByteArray`.
      */
     private fun createForwardablePayload(
         type: Byte,
@@ -164,28 +151,22 @@ class NearbyConnectionsManager(
         messageId: UUID,
         data: ByteArray
     ): Payload {
-        val buffer = ByteBuffer.allocate(1 + 1 + 16 + data.size)
-        buffer.put(type)
-        buffer.put(hopCount)
-        buffer.putLong(messageId.mostSignificantBits)
-        buffer.putLong(messageId.leastSignificantBits)
-        buffer.put(data)
-        return Payload.fromBytes(buffer.array())
+        val networkMessage = NetworkMessage(
+            type = type,
+            hopCount = hopCount,
+            messageId = messageId.toString(),
+            payloadContent = data.toString(Charsets.UTF_8)
+        )
+        val jsonString = Json.encodeToString(networkMessage)
+        return Payload.fromBytes(jsonString.toByteArray(Charsets.UTF_8))
     }
 
     /**
-     * Extracts the type, hop count, UUID, and original data from a forwardable payload.
+     * Extracts the `NetworkMessage` from a received `Payload` by deserializing from JSON.
      */
-    private fun unpackForwardablePayload(payload: Payload): UnpackedPayload {
-        val buffer = ByteBuffer.wrap(payload.asBytes()!!)
-        val type = buffer.get()
-        val hopCount = buffer.get()
-        val mostSigBits = buffer.long
-        val leastSigBits = buffer.long
-        val messageId = UUID(mostSigBits, leastSigBits)
-        val data = ByteArray(buffer.remaining())
-        buffer.get(data)
-        return UnpackedPayload(type, hopCount, messageId, data)
+    private fun unpackForwardablePayload(payload: Payload): NetworkMessage {
+        val jsonString = payload.asBytes()!!.toString(Charsets.UTF_8)
+        return Json.decodeFromString<NetworkMessage>(jsonString)
     }
 
     val connectedPeerCount: Int
@@ -227,110 +208,65 @@ class NearbyConnectionsManager(
         }
     }
 
-    private fun analyzeAndLogRewiringOpportunities() {
-        logger.log("Analyzing network for rewiring opportunities.")
-        val myPeers = connectedEndpoints.toSet()
-        if (myPeers.size < 2) {
-            logger.log("Not enough peers to analyze for rewiring.")
-            return
-        }
-
-        // Find redundant local connections (triangles)
-        var redundantPeer: String? = null
-        for (peerA in myPeers) {
-            val peersOfPeerA = neighborPeerLists[peerA]?.toSet() ?: continue
-            for (peerB in myPeers) {
-                if (peerA != peerB && peersOfPeerA.contains(peerB)) {
-                    redundantPeer = peerB
-                    logger.log("Found redundant connection: We are connected to $peerA and $peerB, and they are connected to each other.")
-                    break
-                }
-            }
-            if (redundantPeer != null) break
-        }
-
-        if (redundantPeer == null) {
-            logger.log("No redundant local connections found.")
-            return
-        }
-
-        // Find the most distant node we know of
-        val mostDistantNode = distantNodes.entries
-            .filter { !myPeers.contains(it.key) } // Not one of our direct peers
-            .maxByOrNull { it.value }
-
-        if (mostDistantNode == null) {
-            logger.log("No distant nodes found to rewire to.")
-            return
-        }
-
-        logger.log("REWIRING OPPORTUNITY: Drop redundant peer $redundantPeer and connect to distant node ${mostDistantNode.key} (hop count: ${mostDistantNode.value})")
-        // In the future, this is where the actual disconnection/connection logic would go.
-    }
 
     private val payloadCallback = object : PayloadCallback() {
         override fun onPayloadReceived(endpointId: String, payload: Payload) {
             logger.runCatchingWithLogging {
-                if (payload.type != Payload.Type.BYTES || payload.asBytes()!!.size <= 18) {
+                if (payload.type != Payload.Type.BYTES || payload.asBytes()!!.isEmpty()) {
                     logger.log("Received a non-forwardable or empty payload from $endpointId. Processing directly.")
                     payloadReceivedCallback(endpointId, payload)
                     return@runCatchingWithLogging
                 }
 
-                val unpacked = unpackForwardablePayload(payload)
+                val networkMessage = unpackForwardablePayload(payload)
 
-                if (seenMessageIds.containsKey(unpacked.messageId)) {
-                    logger.log("Ignoring duplicate message ${unpacked.messageId} from $endpointId.")
+                if (seenMessageIds.containsKey(UUID.fromString(networkMessage.messageId))) {
+                    logger.log("Ignoring duplicate message ${networkMessage.messageId} from $endpointId.")
                     return@runCatchingWithLogging
                 }
-                seenMessageIds[unpacked.messageId] = System.currentTimeMillis()
+                seenMessageIds[UUID.fromString(networkMessage.messageId)] = System.currentTimeMillis()
 
-                when (unpacked.type) {
-                    MESSAGE_TYPE_DATA -> handleDataPayload(endpointId, unpacked)
-                    MESSAGE_TYPE_GOSSIP_PEER_LIST -> handleGossipPayload(endpointId, unpacked)
-                    else -> logger.log("Received unknown message type: ${unpacked.type}")
+                when (networkMessage.type) {
+                    MESSAGE_TYPE_DATA -> handleDataPayload(endpointId, networkMessage)
+                    MESSAGE_TYPE_GOSSIP_PEER_LIST -> handleGossipPayload(endpointId, networkMessage)
+                    else -> logger.log("Received unknown message type: ${networkMessage.type}")
                 }
-
-                cleanupMessageIdCache()
             }
         }
 
-        private fun handleDataPayload(endpointId: String, unpacked: UnpackedPayload) {
-            logger.log("Received new data message ${unpacked.messageId} from $endpointId with hopCount ${unpacked.hopCount}.")
-            distantNodes[endpointId] = unpacked.hopCount.toInt()
+        private fun handleDataPayload(endpointId: String, networkMessage: NetworkMessage) {
+            logger.log("Received new data message ${networkMessage.messageId} from $endpointId with hopCount ${networkMessage.hopCount}.")
+            val wrapper = HttpRequestWrapper.fromJson(networkMessage.payloadContent)
+            topologyOptimizerCallback.onDataPayloadReceived(
+                networkMessage.hopCount.toInt(),
+                wrapper.sourceNodeId
+            )
+            payloadReceivedCallback(endpointId, Payload.fromBytes(networkMessage.payloadContent.toByteArray(Charsets.UTF_8)))
 
             // 1. Forward to all other peers
             val otherPeers = connectedEndpoints.filter { it != endpointId }
             if (otherPeers.isNotEmpty()) {
-                val nextHopCount = (unpacked.hopCount + 1).toByte()
+                val nextHopCount = (networkMessage.hopCount + 1).toByte()
                 val forwardedPayload = createForwardablePayload(
-                    unpacked.type,
+                    networkMessage.type,
                     nextHopCount,
-                    unpacked.messageId,
-                    unpacked.data
+                    UUID.fromString(networkMessage.messageId),
+                    networkMessage.payloadContent.toByteArray(Charsets.UTF_8)
                 )
                 forwardPayload(otherPeers, forwardedPayload)
             }
 
             // 2. Process the data locally by passing it up to the service
-            payloadReceivedCallback(endpointId, Payload.fromBytes(unpacked.data))
         }
 
-        private fun handleGossipPayload(endpointId: String, unpacked: UnpackedPayload) {
-            val theirPeers = unpacked.data.toString(Charsets.UTF_8).split(",").filter { it.isNotBlank() }
+        private fun handleGossipPayload(endpointId: String, networkMessage: NetworkMessage) {
+            val theirPeers =
+                networkMessage.payloadContent.split(",").filter { it.isNotBlank() }
             logger.log("Received gossip from $endpointId with ${theirPeers.size} peers.")
-            neighborPeerLists[endpointId] = theirPeers
+            topologyOptimizerCallback.onGossipPayloadReceived(endpointId, theirPeers)
             // Do not forward gossip messages
         }
 
-        private fun cleanupMessageIdCache() {
-            if (seenMessageIds.size > MESSAGE_ID_CACHE_SIZE) {
-                val sortedEntries = seenMessageIds.entries.sortedBy { it.value }
-                val toRemove = sortedEntries.take(seenMessageIds.size - MESSAGE_ID_CACHE_SIZE)
-                toRemove.forEach { seenMessageIds.remove(it.key) }
-                logger.log("Cleaned up ${toRemove.size} old message IDs from cache.")
-            }
-        }
 
         override fun onPayloadTransferUpdate(endpointId: String, update: PayloadTransferUpdate) {
             logger.runCatchingWithLogging {
@@ -390,7 +326,6 @@ class NearbyConnectionsManager(
             override fun onDisconnected(endpointId: String) {
                 logger.log("onDisconnected: $endpointId")
                 connectedEndpoints.remove(endpointId)
-                neighborPeerLists.remove(endpointId)
                 // peerCountUpdateCallback(connectedEndpoints.size)
             }
         }
@@ -414,7 +349,7 @@ class NearbyConnectionsManager(
         }
     }
 
-    private fun requestConnection(endpointId: String) {
+    fun requestConnection(endpointId: String) {
         logger.runCatchingWithLogging {
             connectionsClient.requestConnection(
                 endpointName,
@@ -456,4 +391,9 @@ class NearbyConnectionsManager(
             retryCounts.remove(key)
         }
     }
+
+    fun disconnectFromEndpoint(endpointId: String) {
+        connectionsClient.disconnectFromEndpoint(endpointId)
+    }
+
 }

@@ -1,11 +1,10 @@
 package info.benjaminhill.localmesh
 
 import android.content.Intent
-import info.benjaminhill.localmesh.util.AppLogger
 import info.benjaminhill.localmesh.mesh.BridgeService
 import info.benjaminhill.localmesh.mesh.HttpRequestWrapper
+import info.benjaminhill.localmesh.util.AppLogger
 import info.benjaminhill.localmesh.util.AssetManager
-
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.request.request
@@ -176,10 +175,11 @@ class LocalHttpServer(
                         call.respond(HttpStatusCode.BadRequest, "Missing path parameter")
                         return@get
                     }
-                    val intent = Intent(service.applicationContext, DisplayActivity::class.java).apply {
-                        putExtra(DisplayActivity.EXTRA_PATH, path)
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
-                    }
+                    val intent =
+                        Intent(service.applicationContext, DisplayActivity::class.java).apply {
+                            putExtra(DisplayActivity.EXTRA_PATH, path)
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                        }
                     service.startActivity(intent)
                     call.respond(
                         mapOf(
@@ -204,7 +204,12 @@ class LocalHttpServer(
                             val destinationPath = part.originalFileName ?: "unknown.bin"
                             val tempFile = File(
                                 service.cacheDir,
-                                "upload_temp_${System.currentTimeMillis()}_${destinationPath.replace('/', '_')}"
+                                "upload_temp_${System.currentTimeMillis()}_${
+                                    destinationPath.replace(
+                                        '/',
+                                        '_'
+                                    )
+                                }"
                             )
                             part.provider().toInputStream().use { its ->
                                 tempFile.outputStream().use { fos ->

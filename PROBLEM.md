@@ -43,44 +43,131 @@ Stack Overflow question 52773197), they state:
 
 ## Solution
 
-The original implementation used `Strategy.P2P_CLUSTER` and attempted to connect to every discovered device. This created a dense, fully-connected network that quickly exceeded the 3-4 simultaneous connection limit of the underlying Bluetooth radio, making the mesh unstable beyond a handful of devices.
+The original implementation used `Strategy.P2P_CLUSTER` and attempted to connect to every discovered
+device. This created a dense, fully-connected network that quickly exceeded the 3-4 simultaneous
+connection limit of the underlying Bluetooth radio, making the mesh unstable beyond a handful of
+devices.
 
 The new implementation addresses this limitation with a two-part strategy:
 
 ### 1. Sparse Mesh Connection Strategy
 
-Instead of connecting to every available peer, each device now aims to maintain a small, constant number of connections (currently set to 3). This is managed by the `NearbyConnectionsManager`. When a new device is discovered, the manager checks its current number of active connections. If it is already at its target, it will ignore the discovery and not attempt to form a new connection.
+Instead of connecting to every available peer, each device now aims to maintain a small, constant
+number of connections (currently set to 3). This is managed by the `NearbyConnectionsManager`. When
+a new device is discovered, the manager checks its current number of active connections. If it is
+already at its target, it will ignore the discovery and not attempt to form a new connection.
 
-This approach prevents any single device from being overloaded, allowing the network to scale to a much larger number of devices.
+This approach prevents any single device from being overloaded, allowing the network to scale to a
+much larger number of devices.
 
 ### 2. Gossip Protocol for Message Forwarding
 
-A sparse mesh requires a mechanism to ensure messages can reach all nodes, not just a node's immediate neighbors. A "gossip" or "flooding" protocol was implemented to solve this.
+A sparse mesh requires a mechanism to ensure messages can reach all nodes, not just a node's
+immediate neighbors. A "gossip" or "flooding" protocol was implemented to solve this.
 
-- **Message Wrapping:** When a device broadcasts a message, it is wrapped in a container that includes a unique message ID (a UUID).
-- **Forwarding Logic:** When a node receives a message, it checks its local cache of seen message IDs.
-  - If the ID is new, the node processes the message, adds the ID to its cache, and then re-broadcasts the *entire wrapped message* to all of its connected peers.
-  - If the ID is already in the cache, the message is ignored, preventing infinite broadcast loops.
+- **Message Wrapping:** When a device broadcasts a message, it is wrapped in a container that
+  includes a unique message ID (a UUID).
+- **Forwarding Logic:** When a node receives a message, it checks its local cache of seen message
+  IDs.
+    - If the ID is new, the node processes the message, adds the ID to its cache, and then
+      re-broadcasts the *entire wrapped message* to all of its connected peers.
+    - If the ID is already in the cache, the message is ignored, preventing infinite broadcast
+      loops.
 
-This ensures that a message sent from any node will rapidly propagate throughout the entire mesh, reaching every participant while respecting the hardware connection limits of each individual device.
+This ensures that a message sent from any node will rapidly propagate throughout the entire mesh,
+reaching every participant while respecting the hardware connection limits of each individual
+device.
 
 ### 3. Future Work: Self-Optimizing "Small World" Network
 
-The current implementation creates a robust, scalable mesh. The next evolution is to make this mesh self-optimizing, transforming it into a "small-world" network that actively works to reduce message latency. This will be achieved through a dynamic "rewiring" strategy.
+The current implementation creates a robust, scalable mesh. The next evolution is to make this mesh
+self-optimizing, transforming it into a "small-world" network that actively works to reduce message
+latency. This will be achieved through a dynamic "rewiring" strategy.
 
 #### Core Concepts
 
-*   **Hop Count:** Data messages are tagged with a `hopCount` that increments each time the message is forwarded. This serves as a measure of a node's "distance" in the network.
-*   **Peer-List Gossip:** Nodes periodically gossip their list of connected peers to their immediate neighbors. This allows each node to build a map of its local network neighborhood (up to two hops away).
-*   **Connection Slot Management:** Nodes differentiate between a `TARGET_CONNECTIONS` (e.g., 3), which they actively try to maintain, and a `MAX_CONNECTIONS` (e.g., 4), which is the absolute limit. This leaves a spare slot to accept a new, more valuable connection before dropping an old, less valuable one.
-*   **Rewiring Heuristic:** A background process on each node constantly analyzes the network topology to find opportunities to improve it.
-    *   **Trigger:** The process looks for "local triangles"—instances where it is connected to two peers who are also connected to each other. This represents a strong, but potentially redundant, local link.
-    *   **Goal:** The process also identifies the most "distant" node it has heard from (based on the highest `hopCount`).
-    *   **Action (Future):** When a redundant local link is found, the node will drop one of the local peers and attempt to connect to the distant node. This trades a redundant connection for a valuable "long-range" shortcut, dramatically shortening the average path length of the entire network.
+* **Hop Count:** Data messages are tagged with a `hopCount` that increments each time the message is
+  forwarded. This serves as a measure of a node's "distance" in the network.
+* **Peer-List Gossip:** Nodes periodically gossip their list of connected peers to their immediate
+  neighbors. This allows each node to build a map of its local network neighborhood (up to two hops
+  away).
+* **Connection Slot Management:** Nodes differentiate between a `TARGET_CONNECTIONS` (e.g., 3),
+  which they actively try to maintain, and a `MAX_CONNECTIONS` (e.g., 4), which is the absolute
+  limit. This leaves a spare slot to accept a new, more valuable connection before dropping an old,
+  less valuable one.
+* **Rewiring Heuristic:** A background process on each node constantly analyzes the network topology
+  to find opportunities to improve it.
+    * **Trigger:** The process looks for "local triangles"—instances where it is connected to two
+      peers who are also connected to each other. This represents a strong, but potentially
+      redundant, local link.
+    * **Goal:** The process also identifies the most "distant" node it has heard from (based on the
+      highest `hopCount`).
+    * **Action (Future):** When a redundant local link is found, the node will drop one of the local
+      peers and attempt to connect to the distant node. This trades a redundant connection for a
+      valuable "long-range" shortcut, dramatically shortening the average path length of the entire
+      network.
 
 #### Implementation Stages
 
 This feature is being implemented in phases to ensure stability:
 
-1.  **Phase 1 (Complete):** Foundational logic implemented. This includes the hop-count mechanism, peer-list gossip, connection slot management, and the analysis logic. For safety, the rewiring action is **logging-only**. The application will log when it identifies an opportunity to rewire but will not perform the actual disconnection/reconnection.
-2.  **Phase 2 (Future):** Enable active rewiring. The logic from Phase 1 will be activated to allow nodes to dynamically change their connections to optimize the network.
+1. **Phase 1 (Complete):** Foundational logic implemented. This includes the hop-count mechanism,
+
+peer-list gossip, connection slot management, and the analysis logic. For safety, the rewiring
+
+action is **logging-only**. The application will log when it identifies an opportunity to rewire
+
+but will not perform the actual disconnection/reconnection.
+
+2. **Phase 2 (Complete):** Enabled active rewiring. The logic from Phase 1 is now active, allowing
+
+nodes to dynamically change their connections to optimize the network. A 60-second cooldown
+
+has been added to prevent the network topology from changing too frequently.
+
+#### Example Scenarios
+
+To illustrate the self-optimizing behavior, consider the following scenarios with several phones.
+
+##### Good Outcome: Successful Optimization
+
+
+
+1.  **Initial State:** PhoneA, PhoneB, and PhoneC are all close to each other. They form a fully connected "triangle" where A is connected to B, B is connected to C, and A is also connected to C. This is a strong but redundant local group.
+
+2.  **New Arrival:** A distant phone, PhoneD, comes into range and connects only to PhoneC.
+
+3.  **Gossip & Data Flow:** Through periodic gossip messages and data payloads, PhoneA learns about PhoneD. The `nodeHopCounts` map on PhoneA is updated, indicating PhoneD is, for example, 2 hops away (via PhoneC).
+
+4.  **Analysis (60 seconds later):** PhoneA's `TopologyOptimizer` runs. It first cleans up any expired entries in its `nodeHopCounts` map (fading). Then, it identifies its connection to PhoneC as redundant because A is already connected to B, and B is connected to C. It also identifies PhoneD (from its `nodeHopCounts` map) as the most distant non-direct peer.
+
+5.  **Rewiring Action:** The conditions are met and the 60-second cooldown has passed.
+
+    *   PhoneA's `TopologyOptimizer` instructs `NearbyConnectionsManager` to disconnect from the redundant peer, PhoneC.
+
+    *   PhoneA's `TopologyOptimizer` then instructs `NearbyConnectionsManager` to use the free connection slot to send a connection request to the distant peer, PhoneD.
+
+6.  **Final State:** The connection to PhoneD is successful. The network topology has been optimized. PhoneA now has a "long-range" link across the mesh, reducing the average hop count for all messages and making the network more efficient.
+
+##### Bad Outcome: Failed Optimization
+
+1. **Initial State:** Same as above. PhoneA, PhoneB, and PhoneC form a redundant triangle. The
+   distant PhoneD connects to PhoneC.
+
+2. **Analysis (60 seconds later):** Same as above. PhoneA identifies the redundant link to PhoneC
+   and the opportunity to connect to the distant PhoneD.
+
+3. **Rewiring Action:**
+
+    * PhoneA disconnects from PhoneC.
+
+    * PhoneA sends a connection request to PhoneD.
+
+4. **Connection Failure:** The connection request to PhoneD fails. This could be due to radio
+   interference, the user of PhoneD moving out of range, or a temporary API error. The automatic
+   retry mechanism also fails.
+
+5. **Final State:** PhoneA is now in a less-connected state. It is only connected to PhoneB. It has
+   lost its direct path to PhoneC and failed to establish the new, long-range link to PhoneD.
+   Because of the 60-second rewiring cooldown, PhoneA cannot attempt another optimization for at
+   least a minute, leaving the network in this temporarily degraded state.

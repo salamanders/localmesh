@@ -91,6 +91,7 @@ object AssetManager {
                         Log.e(TAG, "Failed to copy asset file: $assetPath", e)
                     }
                 }
+
                 else -> Log.d(TAG, "Skipping $assetPath, already exists")
             }
         }

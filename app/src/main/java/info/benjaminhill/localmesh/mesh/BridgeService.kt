@@ -47,6 +47,7 @@ class BridgeService : Service() {
     internal lateinit var nearbyConnectionsManager: NearbyConnectionsManager
     internal lateinit var localHttpServer: LocalHttpServer
     internal lateinit var serviceHardener: ServiceHardener
+    internal lateinit var topologyOptimizer: TopologyOptimizer
     private lateinit var logger: AppLogger
 
     lateinit var endpointName: String
@@ -65,9 +66,10 @@ class BridgeService : Service() {
         logger = AppLogger(TAG, LogFileWriter(applicationContext))
 
         logger.runCatchingWithLogging {
-                (('A'..'Z') + ('a'..'z') + ('0'..'9')).shuffled().take(5).joinToString("").also {
-                    logger.log("This node is now named: $it")
-                }
+            (('A'..'Z') + ('a'..'z') + ('0'..'9')).shuffled().take(5).joinToString("").also {
+                endpointName = it
+                logger.log("This node is now named: $it")
+            }
 
             if (!::serviceHardener.isInitialized) {
                 serviceHardener = ServiceHardener(this, logger)
@@ -79,14 +81,23 @@ class BridgeService : Service() {
                 nearbyConnectionsManager = NearbyConnectionsManager(
                     context = this,
                     endpointName = endpointName,
-                    logger = logger
-                ) { _, payload ->
-                    when (payload.type) {
-                        Payload.Type.BYTES -> handleBytesPayload(payload)
-                        Payload.Type.STREAM -> handleStreamPayload(payload)
-                        else -> logger.e("Received unsupported payload type: ${payload.type}")
-                    }
-                }
+                    logger = logger,
+                    payloadReceivedCallback = { _, payload ->
+                        when (payload.type) {
+                            Payload.Type.BYTES -> handleBytesPayload(payload)
+                            Payload.Type.STREAM -> handleStreamPayload(payload)
+                            else -> logger.e("Received unsupported payload type: ${payload.type}")
+                        }
+                    },
+                    topologyOptimizerCallback = topologyOptimizer
+                )
+            }
+            if (!::topologyOptimizer.isInitialized) {
+                topologyOptimizer = TopologyOptimizer(
+                    connectionsManager = nearbyConnectionsManager,
+                    logger = logger,
+                    endpointName = endpointName
+                )
             }
             logger.log("onCreate() finished successfully")
         } ?: run {
@@ -206,6 +217,7 @@ class BridgeService : Service() {
 
         startForeground(1, notification, FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
         nearbyConnectionsManager.start()
+        topologyOptimizer.start()
         serviceHardener.start()
         currentState = BridgeState.Running
         logger.log("Service started and running.")
@@ -238,6 +250,7 @@ class BridgeService : Service() {
         currentState = BridgeState.Stopping
 
         serviceHardener.stop()
+        topologyOptimizer.stop()
         nearbyConnectionsManager.stop()
         localHttpServer.stop()
         stopForeground(STOP_FOREGROUND_REMOVE)

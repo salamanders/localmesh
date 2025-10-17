@@ -4,6 +4,7 @@ import android.content.Context
 import info.benjaminhill.localmesh.mesh.BridgeService
 import info.benjaminhill.localmesh.mesh.BridgeState
 import info.benjaminhill.localmesh.mesh.NearbyConnectionsManager
+import info.benjaminhill.localmesh.util.AppLogger
 import info.benjaminhill.localmesh.util.AssetManager
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
@@ -25,7 +26,6 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.mockito.kotlin.any
-import info.benjaminhill.localmesh.util.AppLogger
 import org.mockito.kotlin.doReturn
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.verify
@@ -79,7 +79,13 @@ class LocalHttpServerTest {
         server = LocalHttpServer(mockBridgeService, mockLogger)
         server.start()
         doReturn(3).`when`(mockNearbyConnectionsManager).connectedPeerCount
-        doReturn(listOf("peer1", "peer2", "peer3")).`when`(mockNearbyConnectionsManager).connectedPeerIds
+        doReturn(
+            listOf(
+                "peer1",
+                "peer2",
+                "peer3"
+            )
+        ).`when`(mockNearbyConnectionsManager).connectedPeerIds
 
         // When
         val client = HttpClient(CIO)

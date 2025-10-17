@@ -2,13 +2,13 @@ package info.benjaminhill.localmesh.mesh
 
 import com.google.android.gms.nearby.connection.Payload
 import info.benjaminhill.localmesh.LocalHttpServer
+import info.benjaminhill.localmesh.util.AppLogger
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import info.benjaminhill.localmesh.util.AppLogger
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.verify
 import org.powermock.reflect.Whitebox
