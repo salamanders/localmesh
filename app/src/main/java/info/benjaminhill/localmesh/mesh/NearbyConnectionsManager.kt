@@ -44,7 +44,6 @@ private data class NetworkMessage(
 )
 
 
-
 /**
  * Manages all peer-to-peer network interactions using the Google Nearby Connections API.
  *
@@ -224,7 +223,8 @@ class NearbyConnectionsManager(
                     logger.log("Ignoring duplicate message ${networkMessage.messageId} from $endpointId.")
                     return@runCatchingWithLogging
                 }
-                seenMessageIds[UUID.fromString(networkMessage.messageId)] = System.currentTimeMillis()
+                seenMessageIds[UUID.fromString(networkMessage.messageId)] =
+                    System.currentTimeMillis()
 
                 when (networkMessage.type) {
                     MESSAGE_TYPE_DATA -> handleDataPayload(endpointId, networkMessage)
@@ -241,7 +241,10 @@ class NearbyConnectionsManager(
                 networkMessage.hopCount.toInt(),
                 wrapper.sourceNodeId
             )
-            payloadReceivedCallback(endpointId, Payload.fromBytes(networkMessage.payloadContent.toByteArray(Charsets.UTF_8)))
+            payloadReceivedCallback(
+                endpointId,
+                Payload.fromBytes(networkMessage.payloadContent.toByteArray(Charsets.UTF_8))
+            )
 
             // 1. Forward to all other peers
             val otherPeers = connectedEndpoints.filter { it != endpointId }

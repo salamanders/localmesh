@@ -3,12 +3,14 @@ package info.benjaminhill.localmesh.mesh
 import android.content.Context
 import android.os.PowerManager
 import info.benjaminhill.localmesh.util.AppLogger
-
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
@@ -20,8 +22,7 @@ import kotlin.random.Random
  * This class is responsible for acquiring a wakelock to keep the device awake, and for scheduling
  * periodic checks of the web server, P2P network, and WebView. If any of these components
  * are found to be unhealthy, the service is restarted. This class does not handle any UI,
- * and it does not directly handle any networking. It is surprising that this class uses
- * `runBlocking` to perform network requests on the main thread.
+ * and it does not directly handle any networking.
  */
 class ServiceHardener(
     private val service: BridgeService,
@@ -31,9 +32,10 @@ class ServiceHardener(
     private var wakeLock: PowerManager.WakeLock? = null
     private lateinit var scheduler: ScheduledExecutorService
     private val client = HttpClient(CIO)
+    private val scope = CoroutineScope(Dispatchers.IO)
 
-    private val _lastP2pMessageTime = AtomicLong(0L)
-    private val _lastWebViewReportTime = AtomicLong(0L)
+    private val lastP2pMessageTime = AtomicLong(0L)
+    private val lastWebViewReportTime = AtomicLong(0L)
 
     fun start() {
         logger.log("ServiceHardener starting.")
@@ -60,6 +62,7 @@ class ServiceHardener(
         releaseWakeLock()
         if (::scheduler.isInitialized && !scheduler.isShutdown) {
             scheduler.shutdown()
+            scope.cancel()
             logger.runCatchingWithLogging {
                 if (!scheduler.awaitTermination(5, TimeUnit.SECONDS)) {
                     scheduler.shutdownNow()
@@ -71,51 +74,50 @@ class ServiceHardener(
     }
 
     fun updateP2pMessageTime() {
-        _lastP2pMessageTime.set(System.currentTimeMillis())
+        lastP2pMessageTime.set(System.currentTimeMillis())
     }
 
     fun updateWebViewReportTime() {
-        _lastWebViewReportTime.set(System.currentTimeMillis())
+        lastWebViewReportTime.set(System.currentTimeMillis())
     }
 
     fun resetTimestamps() {
         val now = System.currentTimeMillis()
-        _lastP2pMessageTime.set(now)
-        _lastWebViewReportTime.set(now)
+        lastP2pMessageTime.set(now)
+        lastWebViewReportTime.set(now)
     }
 
     private fun runChecks() {
         logger.log("Running hardener checks...")
-        val failureMessages = buildList {
-            if (!isWebServerHealthy()) add("Web server is not responsive.")
-            if (!isP2pNetworkHealthy()) add("P2P network is unhealthy.")
-            if (!isWebViewHealthy()) add("WebView appears frozen.")
-        }
+        scope.launch {
+            val failureMessages = mutableListOf<String>()
+            if (!isWebServerHealthy()) failureMessages.add("Web server is not responsive.")
+            if (!isP2pNetworkHealthy()) failureMessages.add("P2P network is unhealthy.")
+            if (!isWebViewHealthy()) failureMessages.add("WebView appears frozen.")
 
-        if (failureMessages.isEmpty()) {
-            logger.log("Hardener checks passed.")
-        } else {
-            val reason = failureMessages.joinToString(" ")
-            logger.e("Hardener failure detected: $reason. Restarting service.")
-            service.restart()
+            if (failureMessages.isEmpty()) {
+                logger.log("Hardener checks passed.")
+            } else {
+                val reason = failureMessages.joinToString(" ")
+                logger.e("Hardener failure detected: $reason. Restarting service.")
+                service.restart()
+            }
         }
     }
 
-    private fun isWebServerHealthy(): Boolean = logger.runCatchingWithLogging {
-        runBlocking {
-            val response = client.get("http://127.0.0.1:8099/status")
-            val healthy = response.status.value in 200..299 && response.bodyAsText().isNotEmpty()
-            if (!healthy) {
-                logger.e("Web server health check failed with status ${response.status.value}")
-            }
-            healthy
+    private suspend fun isWebServerHealthy(): Boolean = logger.runCatchingWithLogging {
+        val response = client.get("http://127.0.0.1:8099/status")
+        val healthy = response.status.value in 200..299 && response.bodyAsText().isNotEmpty()
+        if (!healthy) {
+            logger.e("Web server health check failed with status ${response.status.value}")
         }
+        healthy
     } ?: false
 
     private fun isP2pNetworkHealthy(): Boolean {
         val now = System.currentTimeMillis()
         val uptime = now - service.serviceStartTime
-        val timeSinceLastMessage = now - _lastP2pMessageTime.get()
+        val timeSinceLastMessage = now - lastP2pMessageTime.get()
 
         if (uptime > FIVE_MINUTES_MS && service.nearbyConnectionsManager.connectedPeerCount == 0) {
             logger.e("P2P Health Fail: No peers connected after ${uptime / 1000}s.")
@@ -132,7 +134,7 @@ class ServiceHardener(
 
     private fun isWebViewHealthy(): Boolean {
         val now = System.currentTimeMillis()
-        val timeSinceLastWebViewUpdate = now - _lastWebViewReportTime.get()
+        val timeSinceLastWebViewUpdate = now - lastWebViewReportTime.get()
         return (timeSinceLastWebViewUpdate <= WEBVIEW_TIMEOUT_MS).also {
             if (!it) {
                 logger.e("WebView Health Fail: No report for ${timeSinceLastWebViewUpdate / 1000}s.")

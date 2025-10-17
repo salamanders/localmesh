@@ -19,7 +19,7 @@ import org.robolectric.RobolectricTestRunner
  * This class tests the ability of the `BridgeService` to handle incoming byte payloads
  * and dispatch them to the `LocalHttpServer`. This class does not test the P2P
  * communication itself, but rather the handling of the byte payloads after they
- * have been received. It is surprising that this class uses `Whitebox` to set
+ * have been received. This class uses `Whitebox` to set
  * internal state on the `BridgeService`.
  */
 @RunWith(RobolectricTestRunner::class)

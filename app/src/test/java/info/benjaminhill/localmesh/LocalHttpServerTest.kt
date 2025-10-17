@@ -37,7 +37,7 @@ import java.io.File
  * This class tests the ability of the `LocalHttpServer` to serve static files,
  * handle API requests, and broadcast messages to peers. This class does not
  * test the P2P communication itself, but rather the handling of the HTTP
- * requests and responses. It is surprising that this class uses a mock
+ * requests and responses. This class uses a mock
  * `BridgeService` to test the `LocalHttpServer`.
  */
 @RunWith(RobolectricTestRunner::class)
