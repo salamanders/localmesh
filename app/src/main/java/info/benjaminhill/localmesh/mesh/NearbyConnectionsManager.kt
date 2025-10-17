@@ -23,8 +23,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.nio.ByteBuffer
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.math.pow
+
+private const val TARGET_CONNECTIONS = 3
+private const val MESSAGE_ID_CACHE_SIZE = 100
 
 /**
  * Manages all peer-to-peer network interactions using the Google Nearby Connections API.
@@ -58,6 +64,8 @@ class NearbyConnectionsManager(
     private val serviceId = "info.benjaminhill.localmesh.v1"
     private val connectedEndpoints = ConcurrentLinkedQueue<String>()
     private val retryCounts = mutableMapOf<String, Int>()
+    private val seenMessageIds = ConcurrentHashMap<UUID, Long>()
+
 
     fun start() {
         logger.log("NearbyConnectionsManager.start()")
@@ -72,6 +80,7 @@ class NearbyConnectionsManager(
         connectionsClient.stopAllEndpoints()
         connectedEndpoints.clear()
         retryCounts.clear()
+        seenMessageIds.clear()
     }
 
     fun sendPayload(endpointIds: List<String>, payload: Payload) =
@@ -83,8 +92,48 @@ class NearbyConnectionsManager(
                 }
         }
 
-    fun broadcastBytes(payload: ByteArray) {
-        sendPayload(connectedEndpoints.toList(), Payload.fromBytes(payload))
+    /**
+     * Broadcasts a byte array to all connected endpoints, wrapping it in a forwardable message structure.
+     */
+    fun broadcastBytes(data: ByteArray) {
+        val messageId = UUID.randomUUID()
+        val payload = createForwardablePayload(messageId, data)
+        logger.log("Broadcasting original message $messageId to ${connectedEndpoints.size} peers.")
+        sendPayload(connectedEndpoints.toList(), payload)
+    }
+
+    /**
+     * Forwards a payload to a list of endpoints.
+     * This is used to propagate messages through the mesh.
+     */
+    private fun forwardPayload(endpointIds: List<String>, payload: Payload) {
+        logger.log("Forwarding message to ${endpointIds.size} peers.")
+        sendPayload(endpointIds, payload)
+    }
+
+    /**
+     * Creates a payload with a prepended UUID for tracking and forwarding.
+     * Format: [16-byte UUID][original data]
+     */
+    private fun createForwardablePayload(messageId: UUID, data: ByteArray): Payload {
+        val buffer = ByteBuffer.allocate(16 + data.size)
+        buffer.putLong(messageId.mostSignificantBits)
+        buffer.putLong(messageId.leastSignificantBits)
+        buffer.put(data)
+        return Payload.fromBytes(buffer.array())
+    }
+
+    /**
+     * Extracts the UUID and the original data from a forwardable payload.
+     */
+    private fun unpackForwardablePayload(payload: Payload): Pair<UUID, ByteArray> {
+        val buffer = ByteBuffer.wrap(payload.asBytes()!!)
+        val mostSigBits = buffer.long
+        val leastSigBits = buffer.long
+        val messageId = UUID(mostSigBits, leastSigBits)
+        val data = ByteArray(buffer.remaining())
+        buffer.get(data)
+        return messageId to data
     }
 
     val connectedPeerCount: Int
@@ -129,7 +178,42 @@ class NearbyConnectionsManager(
     private val payloadCallback = object : PayloadCallback() {
         override fun onPayloadReceived(endpointId: String, payload: Payload) {
             logger.runCatchingWithLogging {
-                payloadReceivedCallback(endpointId, payload)
+                if (payload.type != Payload.Type.BYTES || payload.asBytes()!!.size <= 16) {
+                    logger.log("Received a non-forwardable or empty payload from $endpointId. Processing directly.")
+                    payloadReceivedCallback(endpointId, payload)
+                    return@runCatchingWithLogging
+                }
+
+                val (messageId, data) = unpackForwardablePayload(payload)
+
+                if (seenMessageIds.containsKey(messageId)) {
+                    logger.log("Ignoring duplicate message $messageId from $endpointId.")
+                    return@runCatchingWithLogging
+                }
+
+                logger.log("Received new message $messageId from $endpointId.")
+                seenMessageIds[messageId] = System.currentTimeMillis()
+
+                // 1. Forward to all other peers
+                val otherPeers = connectedEndpoints.filter { it != endpointId }
+                if (otherPeers.isNotEmpty()) {
+                    forwardPayload(otherPeers, payload)
+                }
+
+                // 2. Process the data locally by passing it up to the service
+                payloadReceivedCallback(endpointId, Payload.fromBytes(data))
+
+                // 3. Clean up old message IDs to prevent the cache from growing indefinitely
+                cleanupMessageIdCache()
+            }
+        }
+
+        private fun cleanupMessageIdCache() {
+            if (seenMessageIds.size > MESSAGE_ID_CACHE_SIZE) {
+                val sortedEntries = seenMessageIds.entries.sortedBy { it.value }
+                val toRemove = sortedEntries.take(seenMessageIds.size - MESSAGE_ID_CACHE_SIZE)
+                toRemove.forEach { seenMessageIds.remove(it.key) }
+                logger.log("Cleaned up ${toRemove.size} old message IDs from cache.")
             }
         }
 
@@ -195,7 +279,12 @@ class NearbyConnectionsManager(
             discoveredEndpointInfo: DiscoveredEndpointInfo
         ) {
             logger.log("onEndpointFound: ${discoveredEndpointInfo.endpointName} (id:$endpointId)")
-            requestConnection(endpointId)
+            if (connectedEndpoints.size < TARGET_CONNECTIONS) {
+                logger.log("Attempting to connect to $endpointId (current connections: ${connectedEndpoints.size})")
+                requestConnection(endpointId)
+            } else {
+                logger.log("Skipping connection to $endpointId (already at target connections: ${connectedEndpoints.size})")
+            }
         }
 
         override fun onEndpointLost(endpointId: String) {

@@ -38,3 +38,28 @@ Stack Overflow question 52773197), they state:
 
 > "The Bluetooth radio inside phones is weak and can only hold 3~4 connections at a time. To be able
 > to connect all ~30 devices, I'd recommend forming a 'snake-like' connection."
+
+***
+
+## Solution
+
+The original implementation used `Strategy.P2P_CLUSTER` and attempted to connect to every discovered device. This created a dense, fully-connected network that quickly exceeded the 3-4 simultaneous connection limit of the underlying Bluetooth radio, making the mesh unstable beyond a handful of devices.
+
+The new implementation addresses this limitation with a two-part strategy:
+
+### 1. Sparse Mesh Connection Strategy
+
+Instead of connecting to every available peer, each device now aims to maintain a small, constant number of connections (currently set to 3). This is managed by the `NearbyConnectionsManager`. When a new device is discovered, the manager checks its current number of active connections. If it is already at its target, it will ignore the discovery and not attempt to form a new connection.
+
+This approach prevents any single device from being overloaded, allowing the network to scale to a much larger number of devices.
+
+### 2. Gossip Protocol for Message Forwarding
+
+A sparse mesh requires a mechanism to ensure messages can reach all nodes, not just a node's immediate neighbors. A "gossip" or "flooding" protocol was implemented to solve this.
+
+- **Message Wrapping:** When a device broadcasts a message, it is wrapped in a container that includes a unique message ID (a UUID).
+- **Forwarding Logic:** When a node receives a message, it checks its local cache of seen message IDs.
+  - If the ID is new, the node processes the message, adds the ID to its cache, and then re-broadcasts the *entire wrapped message* to all of its connected peers.
+  - If the ID is already in the cache, the message is ignored, preventing infinite broadcast loops.
+
+This ensures that a message sent from any node will rapidly propagate throughout the entire mesh, reaching every participant while respecting the hardware connection limits of each individual device.
