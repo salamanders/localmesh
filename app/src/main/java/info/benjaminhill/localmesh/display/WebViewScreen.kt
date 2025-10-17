@@ -1,4 +1,4 @@
-package info.benjaminhill.localmesh.customdisplay
+package info.benjaminhill.localmesh.display
 
 import android.annotation.SuppressLint
 import android.util.Log

@@ -1,6 +1,7 @@
 package info.benjaminhill.localmesh
 
 import android.content.Intent
+import info.benjaminhill.localmesh.display.DisplayActivity
 import info.benjaminhill.localmesh.mesh.BridgeService
 import info.benjaminhill.localmesh.mesh.HttpRequestWrapper
 import info.benjaminhill.localmesh.util.AppLogger

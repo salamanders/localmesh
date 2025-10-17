@@ -43,7 +43,7 @@
             android:exported="false"
             android:foregroundServiceType="connectedDevice" />
         <activity
-            android:name=".DisplayActivity"
+            android:name=".display.DisplayActivity"
             android:hardwareAccelerated="true"
             android:launchMode="singleTop"
             android:theme="@style/Theme.LocalMesh" />

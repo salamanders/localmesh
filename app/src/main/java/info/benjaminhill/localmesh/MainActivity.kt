@@ -15,6 +15,7 @@ import androidx.compose.material3.Text
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import info.benjaminhill.localmesh.display.DisplayActivity
 import info.benjaminhill.localmesh.mesh.BridgeService
 import info.benjaminhill.localmesh.util.AssetManager
 import info.benjaminhill.localmesh.util.PermissionUtils

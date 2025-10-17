@@ -1,9 +1,10 @@
-package info.benjaminhill.localmesh
+package info.benjaminhill.localmesh.display
 
 import android.content.Context
 import android.content.Intent
 import androidx.test.core.app.ApplicationProvider
 import com.google.android.gms.nearby.connection.Payload
+import info.benjaminhill.localmesh.LocalHttpServer
 import info.benjaminhill.localmesh.mesh.BridgeService
 import info.benjaminhill.localmesh.mesh.HttpRequestWrapper
 import info.benjaminhill.localmesh.mesh.NearbyConnectionsManager
@@ -15,8 +16,7 @@ import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import kotlinx.coroutines.runBlocking
 import org.junit.After
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
+import org.junit.Assert
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -57,7 +57,7 @@ class CacheAndDisplayTest {
         // 3. Get a reference to the LocalHttpServer created by the service
         localHttpServer = bridgeService.localHttpServer
         // Manually ensure the server is started for the test
-        bridgeService.onStartCommand(Intent(BridgeService.ACTION_START), 0, 0)
+        bridgeService.onStartCommand(Intent(BridgeService.Companion.ACTION_START), 0, 0)
 
 
         // 4. Define the cache directory and create a temporary file to "receive"
@@ -73,7 +73,7 @@ class CacheAndDisplayTest {
 
     @After
     fun tearDown() {
-        bridgeService.onStartCommand(Intent(BridgeService.ACTION_STOP), 0, 0)
+        bridgeService.onStartCommand(Intent(BridgeService.Companion.ACTION_STOP), 0, 0)
         webCacheDir.deleteRecursively()
         tempFileToSend.delete()
     }
@@ -104,8 +104,8 @@ class CacheAndDisplayTest {
 
         // --- Verify the file is cached and can be displayed ---
         val cachedFile = File(webCacheDir, destinationPath)
-        assertTrue("File was not cached to the correct location.", cachedFile.exists())
-        assertEquals(
+        Assert.assertTrue("File was not cached to the correct location.", cachedFile.exists())
+        Assert.assertEquals(
             "Cached file content does not match original.",
             tempFileToSend.readText(),
             cachedFile.readText()
@@ -114,10 +114,10 @@ class CacheAndDisplayTest {
         // Simulate a "display" by making an HTTP GET request to the local server
         val client = HttpClient(CIO)
         val response: HttpResponse =
-            client.get("http://localhost:${LocalHttpServer.PORT}/test/index.html")
+            client.get("http://localhost:${LocalHttpServer.Companion.PORT}/test/index.html")
         val responseBody = response.bodyAsText()
 
-        assertEquals(
+        Assert.assertEquals(
             "HTTP response body did not match the file content.",
             tempFileToSend.readText(),
             responseBody

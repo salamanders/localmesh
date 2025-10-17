@@ -1,4 +1,4 @@
-package info.benjaminhill.localmesh
+package info.benjaminhill.localmesh.display
 
 import android.content.ComponentName
 import android.content.Intent
@@ -14,7 +14,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.mutableStateOf
-import info.benjaminhill.localmesh.customdisplay.WebViewScreen
+import info.benjaminhill.localmesh.LocalHttpServer
 import info.benjaminhill.localmesh.mesh.BridgeService
 
 /**
@@ -58,7 +58,7 @@ class DisplayActivity : ComponentActivity() {
 
         setContent {
             WebViewScreen(
-                url = "http://localhost:${LocalHttpServer.PORT}/${pathState.value}",
+                url = "http://localhost:${LocalHttpServer.Companion.PORT}/${pathState.value}",
                 onWebViewReady = { webView ->
                     this@DisplayActivity.webView = webView
                 }

@@ -15,7 +15,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.google.android.gms.nearby.connection.Payload
 import info.benjaminhill.localmesh.LocalHttpServer
-import info.benjaminhill.localmesh.LogFileWriter
+import info.benjaminhill.localmesh.util.LogFileWriter
 import info.benjaminhill.localmesh.MainActivity
 import info.benjaminhill.localmesh.R
 import info.benjaminhill.localmesh.util.AppLogger

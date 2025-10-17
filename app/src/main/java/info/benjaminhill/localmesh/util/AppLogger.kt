@@ -1,7 +1,6 @@
 package info.benjaminhill.localmesh.util
 
 import android.util.Log
-import info.benjaminhill.localmesh.LogFileWriter
 
 /**
  * A simple logger that writes to both Logcat and a file.
