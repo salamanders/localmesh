@@ -11,7 +11,6 @@ import android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
 import android.net.wifi.WifiManager
 import android.os.Binder
 import android.os.IBinder
-import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.google.android.gms.nearby.connection.Payload
@@ -19,6 +18,7 @@ import info.benjaminhill.localmesh.LocalHttpServer
 import info.benjaminhill.localmesh.LogFileWriter
 import info.benjaminhill.localmesh.MainActivity
 import info.benjaminhill.localmesh.R
+import info.benjaminhill.localmesh.util.AppLogger
 import info.benjaminhill.localmesh.util.AssetManager
 import info.benjaminhill.localmesh.util.GlobalExceptionHandler.runCatchingWithLogging
 import info.benjaminhill.localmesh.util.PermissionUtils
@@ -29,117 +29,76 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicLong
 
-/**
- * The central foreground service that orchestrates the entire P2P bridge.
- *
- * ## What it does
- * - Manages the lifecycle of the `NearbyConnectionsManager` and the `LocalHttpServer`.
- * - Acts as a bridge, forwarding messages between the network layer (`NearbyConnectionsManager`) and
- *   the application logic layer (`LocalHttpServer`).
- * - Handles incoming `BridgeAction` intents from the UI to start and stop the service.
- * - Manages the foreground service notification and a wake lock to ensure the app stays active.
- *
- * ## What it doesn't do
- * - It does not contain the application's core API logic; that resides in `LocalHttpServer`.
- * - It does not directly manage peer connections; that is delegated to `NearbyConnectionsManager`.
- *
- * ## Comparison to other classes
- * - **[LocalHttpServer]:** `BridgeService` manages the lifecycle of the server, but the server itself
- *   contains all the Ktor routing and application logic.
- * - **[NearbyConnectionsManager]:** `BridgeService` owns and directs the `NearbyConnectionsManager`,
- *   telling it when to start and stop and receiving payloads from it.
- */
 class BridgeService : Service() {
     var currentState: BridgeState = BridgeState.Idle
         internal set
 
     internal lateinit var nearbyConnectionsManager: NearbyConnectionsManager
     internal lateinit var localHttpServer: LocalHttpServer
-    private lateinit var heartbeatManager: HeartbeatManager
+    internal lateinit var serviceHardener: ServiceHardener
+    private lateinit var logger: AppLogger
 
     lateinit var endpointName: String
         internal set
 
-    private var wakeLock: PowerManager.WakeLock? = null
-    internal lateinit var logFileWriter: LogFileWriter
+    @Volatile
+    var serviceStartTime = 0L
 
     internal val incomingFilePayloads = ConcurrentHashMap<Long, String>()
     internal var ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 
-    // Heartbeat tracking
-    @Volatile
-    var serviceStartTime = 0L
-    private val _lastP2pMessageTime = AtomicLong(0L)
-    var lastP2pMessageTime: Long
-        get() = _lastP2pMessageTime.get()
-        private set(value) {
-            _lastP2pMessageTime.set(value)
-        }
-
-    private val _lastWebViewReportTime = AtomicLong(0L)
-    var lastWebViewReportTime: Long
-        get() = _lastWebViewReportTime.get()
-        private set(value) {
-            _lastWebViewReportTime.set(value)
-        }
-
-
     override fun onCreate() {
         super.onCreate()
         Log.i(TAG, "BridgeService.onCreate() called")
-        runCatchingWithLogging(::logError) {
-            if (!::heartbeatManager.isInitialized) {
-                heartbeatManager = HeartbeatManager(this)
-            }
 
+        logger = AppLogger(TAG, LogFileWriter(applicationContext))
+
+        runCatchingWithLogging(logger::e) {
             endpointName =
                 (('A'..'Z') + ('a'..'z') + ('0'..'9')).shuffled().take(5).joinToString("").also {
-                    Log.i(TAG, "This node is now named: $it")
+                    logger.log("This node is now named: $it")
                 }
-            logFileWriter = LogFileWriter(applicationContext)
 
+            if (!::serviceHardener.isInitialized) {
+                serviceHardener = ServiceHardener(this, logger)
+            }
             if (!::localHttpServer.isInitialized) {
-                localHttpServer = LocalHttpServer(this, ::sendLogMessage, ::logError)
+                localHttpServer = LocalHttpServer(this, logger)
             }
             if (!::nearbyConnectionsManager.isInitialized) {
                 nearbyConnectionsManager = NearbyConnectionsManager(
                     context = this,
                     endpointName = endpointName,
-                    // peerCountUpdateCallback = { /* No-op, web UI will poll /status */ },
-                    logMessageCallback = ::sendLogMessage,
-                    logErrorCallback = ::logError
+                    logger = logger
                 ) { _, payload ->
                     when (payload.type) {
                         Payload.Type.BYTES -> handleBytesPayload(payload)
                         Payload.Type.STREAM -> handleStreamPayload(payload)
-                        else -> sendLogMessage("ERROR: Received unsupported payload type: ${payload.type}")
+                        else -> logger.e("Received unsupported payload type: ${payload.type}")
                     }
                 }
             }
-
-            Log.i(TAG, "onCreate() finished successfully")
+            logger.log("onCreate() finished successfully")
         } ?: run {
-            sendLogMessage("FATAL: Service crashed on create.")
+            logger.e("FATAL: Service crashed on create.")
             currentState = BridgeState.Error("onCreate failed")
         }
     }
 
     internal fun handleBytesPayload(payload: Payload) {
-        lastP2pMessageTime = System.currentTimeMillis()
-        runCatchingWithLogging(::logError) {
+        serviceHardener.updateP2pMessageTime()
+        runCatchingWithLogging(logger::e) {
             val jsonString = payload.asBytes()!!.toString(Charsets.UTF_8)
             val wrapper = HttpRequestWrapper.fromJson(jsonString)
 
-            // If this is a file broadcast, store the mapping of payloadId to filename
             if (wrapper.path == "/send-file") {
                 val params = wrapper.queryParams.parseUrlEncodedParameters()
                 val filename = params["filename"]
                 val payloadId = params["payloadId"]?.toLongOrNull()
                 if (filename != null && payloadId != null) {
                     incomingFilePayloads[payloadId] = filename
-                    sendLogMessage("Expecting file '$filename' for payload $payloadId")
+                    logger.log("Expecting file '$filename' for payload $payloadId")
                 }
             }
 
@@ -152,14 +111,14 @@ class BridgeService : Service() {
     internal fun handleStreamPayload(payload: Payload) {
         val filename = incomingFilePayloads.remove(payload.id)
         if (filename == null) {
-            sendLogMessage("ERROR: Received stream payload with unknown ID: ${payload.id}")
+            logger.e("Received stream payload with unknown ID: ${payload.id}")
             return
         }
-        runCatchingWithLogging(::logError) {
+        runCatchingWithLogging(logger::e) {
             payload.asStream()?.asInputStream()?.use { inputStream ->
                 AssetManager.saveFile(applicationContext, filename, inputStream)
             }
-            sendLogMessage("File received and saved: $filename")
+            logger.log("File received and saved: $filename")
         }
     }
 
@@ -174,11 +133,11 @@ class BridgeService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        Log.i(TAG, "onStartCommand() called with action: ${intent?.action}")
+        logger.log("onStartCommand() called with action: ${intent?.action}")
         when (intent?.action) {
             ACTION_START -> start()
             ACTION_STOP -> stop()
-            else -> Log.w(TAG, "onStartCommand: Unknown action: ${intent?.action}")
+            else -> logger.log("onStartCommand: Unknown action: ${intent?.action}")
         }
         return START_STICKY
     }
@@ -204,29 +163,23 @@ class BridgeService : Service() {
     }
 
     private fun start() {
-        sendLogMessage("BridgeService.start()")
+        logger.log("BridgeService.start()")
         if (currentState !is BridgeState.Idle) {
-            sendLogMessage("Service is not idle, cannot start. Current state: ${currentState::class.java.simpleName}")
+            logger.log("Service is not idle, cannot start. Current state: ${currentState::class.java.simpleName}")
             return
         }
         currentState = BridgeState.Starting
         serviceStartTime = System.currentTimeMillis()
-        lastP2pMessageTime = serviceStartTime
-        lastWebViewReportTime = serviceStartTime
 
-
-        // Start the local HTTP server immediately.
         if (!localHttpServer.start()) {
-            sendLogMessage("FATAL: LocalHttpServer failed to start.")
+            logger.e("FATAL: LocalHttpServer failed to start.")
             currentState = BridgeState.Error("HTTP server failed to start.")
             stopSelf()
             return
         }
 
         if (!checkHardwareAndPermissions()) {
-            currentState =
-                BridgeState.Error("Hardware or permissions not met.")
-            // Do not stop the entire service, the web UI might be useful.
+            currentState = BridgeState.Error("Hardware or permissions not met.")
             return
         }
 
@@ -244,29 +197,28 @@ class BridgeService : Service() {
 
         startForeground(1, notification, FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
         nearbyConnectionsManager.start()
-        heartbeatManager.start()
-        acquireWakeLock()
+        serviceHardener.start()
         currentState = BridgeState.Running
-        sendLogMessage("Service started and running.")
+        logger.log("Service started and running.")
     }
 
     private fun checkHardwareAndPermissions(): Boolean {
         val bluetoothManager = getSystemService(BLUETOOTH_SERVICE) as BluetoothManager
         if (bluetoothManager.adapter == null || !bluetoothManager.adapter.isEnabled) {
-            sendLogMessage("Bluetooth is not enabled")
+            logger.e("Bluetooth is not enabled")
             return false
         }
 
         val wifiManager = getSystemService(WIFI_SERVICE) as WifiManager
         if (!wifiManager.isWifiEnabled) {
-            sendLogMessage("Wi-Fi is not enabled")
+            logger.e("Wi-Fi is not enabled")
             return false
         }
 
         val requiredPermissions = PermissionUtils.getDangerousPermissions(this)
         for (permission in requiredPermissions) {
             if (checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) {
-                sendLogMessage("Permission not granted: $permission")
+                logger.e("Permission not granted: $permission")
                 return false
             }
         }
@@ -274,43 +226,23 @@ class BridgeService : Service() {
     }
 
     private fun stop() {
-        sendLogMessage("BridgeService.stop()")
+        logger.log("BridgeService.stop()")
         currentState = BridgeState.Stopping
 
-        heartbeatManager.stop()
+        serviceHardener.stop()
         nearbyConnectionsManager.stop()
         localHttpServer.stop()
-        releaseWakeLock()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
 
         currentState = BridgeState.Idle
-        sendLogMessage("Service stopped.")
+        logger.log("Service stopped.")
     }
 
     fun restart() {
-        sendLogMessage("Restarting BridgeService...")
-        // TODO: This might have thread-safety issues.
+        logger.log("Restarting BridgeService...")
         stop()
-        // It seems there should be a small delay here to let things shut down.
         start()
-    }
-
-    fun updateWebViewReportTime() {
-        lastWebViewReportTime = System.currentTimeMillis()
-    }
-
-    private fun acquireWakeLock() {
-        wakeLock = (getSystemService(POWER_SERVICE) as PowerManager).run {
-            newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "LocalMesh::WakeLock").apply {
-                acquire(4 * 60 * 60 * 1000L /*4 hours*/)
-            }
-        }
-    }
-
-    private fun releaseWakeLock() {
-        wakeLock?.release()
-        wakeLock = null
     }
 
     private fun createNotificationChannel() {
@@ -320,21 +252,6 @@ class BridgeService : Service() {
             NotificationManager.IMPORTANCE_DEFAULT
         )
         getSystemService(NotificationManager::class.java).createNotificationChannel(serviceChannel)
-    }
-
-    fun sendLogMessage(message: String) {
-        Log.d(TAG, message)
-        logFileWriter.writeLog(message)
-    }
-
-    internal fun logError(message: String, throwable: Throwable?) {
-        if (throwable != null) {
-            Log.e(TAG, message, throwable)
-            logFileWriter.writeLog("ERROR: $message, ${throwable.message}")
-        } else {
-            Log.e(TAG, message)
-            logFileWriter.writeLog("ERROR: $message")
-        }
     }
 
     companion object {

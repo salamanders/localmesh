@@ -16,6 +16,7 @@ import com.google.android.gms.nearby.connection.Payload
 import com.google.android.gms.nearby.connection.PayloadCallback
 import com.google.android.gms.nearby.connection.PayloadTransferUpdate
 import com.google.android.gms.nearby.connection.Strategy
+import info.benjaminhill.localmesh.util.AppLogger
 import info.benjaminhill.localmesh.util.GlobalExceptionHandler.runCatchingWithLogging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -46,9 +47,7 @@ import kotlin.math.pow
 class NearbyConnectionsManager(
     private val context: Context,
     private val endpointName: String,
-    // private val peerCountUpdateCallback: (Int) -> Unit,
-    private val logMessageCallback: (String) -> Unit,
-    private val logErrorCallback: (String, Throwable) -> Unit,
+    private val logger: AppLogger,
     private val payloadReceivedCallback: (endpointId: String, payload: Payload) -> Unit,
 ) {
 
@@ -61,7 +60,7 @@ class NearbyConnectionsManager(
     private val retryCounts = mutableMapOf<String, Int>()
 
     fun start() {
-        logMessageCallback("NearbyConnectionsManager.start()")
+        logger.log("NearbyConnectionsManager.start()")
         CoroutineScope(Dispatchers.IO).launch {
             startAdvertising()
             startDiscovery()
@@ -69,20 +68,18 @@ class NearbyConnectionsManager(
     }
 
     fun stop() {
-        logMessageCallback("NearbyConnectionsManager.stop()")
+        logger.log("NearbyConnectionsManager.stop()")
         connectionsClient.stopAllEndpoints()
         connectedEndpoints.clear()
         retryCounts.clear()
     }
 
     fun sendPayload(endpointIds: List<String>, payload: Payload) =
-        runCatchingWithLogging({ msg, err ->
-            logErrorCallback(msg, err ?: Exception(msg))
-        }) {
-            logMessageCallback("NearbyConnectionsManager.sendPayload() to ${endpointIds.size} endpoints.")
+        runCatchingWithLogging(logger::e) {
+            logger.log("NearbyConnectionsManager.sendPayload() to ${endpointIds.size} endpoints.")
             connectionsClient.sendPayload(endpointIds, payload)
                 .addOnFailureListener { e ->
-                    logErrorCallback("Failed to send payload ${payload.id}", e)
+                    logger.e("Failed to send payload ${payload.id}", e)
                 }
         }
 
@@ -96,9 +93,7 @@ class NearbyConnectionsManager(
     val connectedPeerIds: List<String>
         get() = connectedEndpoints.toList()
 
-    private suspend fun startAdvertising() = runCatchingWithLogging({ msg, err ->
-        logErrorCallback(msg, err ?: Exception(msg))
-    }) {
+    private suspend fun startAdvertising() = runCatchingWithLogging(logger::e) {
         withContext(Dispatchers.IO) {
             val advertisingOptions =
                 AdvertisingOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).build()
@@ -108,16 +103,14 @@ class NearbyConnectionsManager(
                 connectionLifecycleCallback,
                 advertisingOptions
             ).addOnSuccessListener {
-                logMessageCallback("Advertising started.")
+                logger.log("Advertising started.")
             }.addOnFailureListener { e ->
-                logErrorCallback("Failed to start advertising", e)
+                logger.e("Failed to start advertising", e)
             }
         }
     }
 
-    private suspend fun startDiscovery() = runCatchingWithLogging({ msg, err ->
-        logErrorCallback(msg, err ?: Exception(msg))
-    }) {
+    private suspend fun startDiscovery() = runCatchingWithLogging(logger::e) {
         withContext(Dispatchers.IO) {
             val discoveryOptions =
                 DiscoveryOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).build()
@@ -126,38 +119,34 @@ class NearbyConnectionsManager(
                 endpointDiscoveryCallback,
                 discoveryOptions
             ).addOnSuccessListener {
-                logMessageCallback("Discovery started.")
+                logger.log("Discovery started.")
             }.addOnFailureListener { e ->
-                logErrorCallback("Failed to start discovery", e)
+                logger.e("Failed to start discovery", e)
             }
         }
     }
 
     private val payloadCallback = object : PayloadCallback() {
         override fun onPayloadReceived(endpointId: String, payload: Payload) {
-            runCatchingWithLogging({ msg, err ->
-                logErrorCallback(msg, err ?: Exception(msg))
-            }) {
+            runCatchingWithLogging(logger::e) {
                 payloadReceivedCallback(endpointId, payload)
             }
         }
 
         override fun onPayloadTransferUpdate(endpointId: String, update: PayloadTransferUpdate) {
-            runCatchingWithLogging({ msg, err ->
-                logErrorCallback(msg, err ?: Exception(msg))
-            }) {
+            runCatchingWithLogging(logger::e) {
                 when (update.status) {
                     PayloadTransferUpdate.Status.SUCCESS ->
-                        logMessageCallback("SUCCESS: Payload ${update.payloadId} transfer to $endpointId complete.")
+                        logger.log("SUCCESS: Payload ${update.payloadId} transfer to $endpointId complete.")
 
                     PayloadTransferUpdate.Status.FAILURE ->
-                        logErrorCallback(
+                        logger.e(
                             "FAILURE: Payload ${update.payloadId} transfer to $endpointId failed.",
                             Exception("PayloadTransferUpdate Failure")
                         )
 
                     PayloadTransferUpdate.Status.CANCELED ->
-                        logMessageCallback("CANCELED: Payload ${update.payloadId} transfer to $endpointId was canceled.")
+                        logger.log("CANCELED: Payload ${update.payloadId} transfer to $endpointId was canceled.")
 
                     PayloadTransferUpdate.Status.IN_PROGRESS -> {
                         // Ignoring for now to keep logs clean. This is where you'd update a progress bar.
@@ -170,25 +159,23 @@ class NearbyConnectionsManager(
     private val connectionLifecycleCallback: ConnectionLifecycleCallback =
         object : ConnectionLifecycleCallback() {
             override fun onConnectionInitiated(endpointId: String, connectionInfo: ConnectionInfo) {
-                runCatchingWithLogging({ msg, err ->
-                    logErrorCallback(msg, err ?: Exception(msg))
-                }) {
-                    logMessageCallback("onConnectionInitiated from ${connectionInfo.endpointName} (id:$endpointId)")
+                runCatchingWithLogging(logger::e) {
+                    logger.log("onConnectionInitiated from ${connectionInfo.endpointName} (id:$endpointId)")
                     connectionsClient.acceptConnection(endpointId, payloadCallback)
                         .addOnFailureListener { e ->
-                            logErrorCallback("Failed to accept connection from $endpointId", e)
+                            logger.e("Failed to accept connection from $endpointId", e)
                         }
                 }
             }
 
             override fun onConnectionResult(endpointId: String, result: ConnectionResolution) {
                 if (result.status.isSuccess) {
-                    logMessageCallback("Connected to $endpointId")
+                    logger.log("Connected to $endpointId")
                     connectedEndpoints.add(endpointId)
                     retryCounts.remove(endpointId) // Clear on success
                     // peerCountUpdateCallback(connectedEndpoints.size)
                 } else {
-                    logMessageCallback("Connection to $endpointId failed: ${result.status.statusCode}")
+                    logger.log("Connection to $endpointId failed: ${result.status.statusCode}")
                     scheduleRetry(endpointId, "connection result") {
                         requestConnection(endpointId)
                     }
@@ -196,7 +183,7 @@ class NearbyConnectionsManager(
             }
 
             override fun onDisconnected(endpointId: String) {
-                logMessageCallback("onDisconnected: $endpointId")
+                logger.log("onDisconnected: $endpointId")
                 connectedEndpoints.remove(endpointId)
                 // peerCountUpdateCallback(connectedEndpoints.size)
             }
@@ -207,31 +194,29 @@ class NearbyConnectionsManager(
             endpointId: String,
             discoveredEndpointInfo: DiscoveredEndpointInfo
         ) {
-            logMessageCallback("onEndpointFound: ${discoveredEndpointInfo.endpointName} (id:$endpointId)")
+            logger.log("onEndpointFound: ${discoveredEndpointInfo.endpointName} (id:$endpointId)")
             requestConnection(endpointId)
         }
 
         override fun onEndpointLost(endpointId: String) {
-            logMessageCallback("onEndpointLost: $endpointId")
+            logger.log("onEndpointLost: $endpointId")
         }
     }
 
     private fun requestConnection(endpointId: String) {
-        runCatchingWithLogging({ msg, err ->
-            logErrorCallback(msg, err ?: Exception(msg))
-        }) {
+        runCatchingWithLogging(logger::e) {
             connectionsClient.requestConnection(
                 endpointName,
                 endpointId,
                 connectionLifecycleCallback
             )
                 .addOnSuccessListener {
-                    logMessageCallback("Connection request sent to $endpointId.")
+                    logger.log("Connection request sent to $endpointId.")
                     retryCounts.remove(endpointId) // Clear on success
                 }
                 .addOnFailureListener { e ->
                     val statusCode = (e as? ApiException)?.statusCode
-                    logErrorCallback(
+                    logger.e(
                         "Failed to request connection to $endpointId (code: $statusCode)",
                         e
                     )
@@ -250,13 +235,13 @@ class NearbyConnectionsManager(
             val nextRetry = currentRetries + 1
             retryCounts[key] = nextRetry
             val backoffMillis = (1000 * 2.0.pow(currentRetries)).toLong() + (0..1000).random()
-            logMessageCallback("Scheduling retry for $description on '$key' in $backoffMillis ms (attempt $nextRetry)")
+            logger.log("Scheduling retry for $description on '$key' in $backoffMillis ms (attempt $nextRetry)")
             CoroutineScope(Dispatchers.IO).launch {
                 delay(backoffMillis)
                 action()
             }
         } else {
-            logMessageCallback("Max retries reached for $description on '$key'. Giving up.")
+            logger.log("Max retries reached for $description on '$key'. Giving up.")
             retryCounts.remove(key)
         }
     }

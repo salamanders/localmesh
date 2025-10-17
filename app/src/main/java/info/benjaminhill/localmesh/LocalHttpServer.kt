@@ -1,6 +1,7 @@
 package info.benjaminhill.localmesh
 
 import android.content.Intent
+import info.benjaminhill.localmesh.util.AppLogger
 import info.benjaminhill.localmesh.mesh.BridgeService
 import info.benjaminhill.localmesh.mesh.HttpRequestWrapper
 import info.benjaminhill.localmesh.util.AssetManager
@@ -68,11 +69,9 @@ data class StatusResponse(
  *   is the heart, pumping data between the network and the brain.
  */
 
-
 class LocalHttpServer(
     private val service: BridgeService,
-    private val logMessageCallback: (String) -> Unit,
-    private val logErrorCallback: (String, Throwable) -> Unit,
+    private val logger: AppLogger,
 ) {
 
     private val httpClient = HttpClient(CIO)
@@ -110,7 +109,7 @@ class LocalHttpServer(
                     body = body,
                     sourceNodeId = service.endpointName
                 )
-                logMessageCallback("Broadcasting to peers: $wrapper")
+                logger.log("Broadcasting to peers: $wrapper")
                 service.broadcast(wrapper.toJson())
 
                 // Stop the pipeline for this request by responding immediately.
@@ -120,188 +119,149 @@ class LocalHttpServer(
             }
         }
 
-    private val server = embeddedServer(KtorCIO, port = PORT) {
-        install(ContentNegotiation) {
-            json()
-        }
-        install(PartialContent)
-        install(p2pBroadcastInterceptor)
-        install(StatusPages) {
-            exception<Throwable> { call: ApplicationCall, cause ->
-                logErrorCallback("Unhandled Ktor error on ${call.request.path()}", cause)
-                call.respond(
-                    HttpStatusCode.InternalServerError,
-                    "Internal Server Error: ${cause.message ?: "Unknown error"}"
-                )
-            }
-        }
+    private lateinit var server: io.ktor.server.engine.EmbeddedServer<io.ktor.server.cio.CIOApplicationEngine, io.ktor.server.cio.CIOApplicationEngine.Configuration>
 
-        install(createApplicationPlugin(name = "RedirectFix") {
-            onCall { call ->
-                val rawPath = call.request.path()
-                logMessageCallback("RedirectFix: raw path: \"$rawPath\"")
-                val path = rawPath.trimStart('/')
-                logMessageCallback("RedirectFix: trimmed path: \"$path\"")
-                AssetManager.getRedirectPath(service.applicationContext, path)?.let {
-                    logMessageCallback("Redirecting to: \"$it\"")
-                    call.respondRedirect(it)
-                }
+    fun start(): Boolean = runCatchingWithLogging(logger::e) {
+        logger.log("Attempting to start LocalHttpServer...")
+        server = embeddedServer(KtorCIO, port = PORT) {
+            install(ContentNegotiation) {
+                json()
             }
-        })
-
-        routing {
-            get("/folders") {
-                call.respond(AssetManager.getFolders(service.applicationContext))
-            }
-            get("/status") {
-                // A simple report of the service's status and number of peers
-                call.respond(
-                    StatusResponse(
-                        status = service.currentState.javaClass.simpleName,
-                        id = service.endpointName,
-                        peerCount = service.nearbyConnectionsManager.connectedPeerCount,
-                        peerIds = service.nearbyConnectionsManager.connectedPeerIds
+            install(PartialContent)
+            install(p2pBroadcastInterceptor)
+            install(StatusPages) {
+                exception<Throwable> { call, cause ->
+                    logger.e("Unhandled Ktor error on ${call.request.path()}", cause)
+                    call.respond(
+                        HttpStatusCode.InternalServerError,
+                        "Internal Server Error: ${cause.message ?: "Unknown error"}"
                     )
-                )
-            }
-
-            post("/chat") {
-                val params = call.receiveParameters()
-                val message = params["message"] ?: "[empty]"
-                val source = call.request.queryParameters["sourceNodeId"] ?: "local"
-                logMessageCallback("Chat from $source: $message")
-                call.respond(mapOf("status" to "OK"))
-            }
-
-            get("/display") {
-                val path = call.parameters["path"]
-                if (path == null) {
-                    call.respond(HttpStatusCode.BadRequest, "Missing path parameter")
-                    return@get
                 }
-
-                val intent = Intent(service.applicationContext, DisplayActivity::class.java).apply {
-                    putExtra(DisplayActivity.EXTRA_PATH, path)
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
-                }
-
-                service.startActivity(intent)
-
-                call.respond(
-                    mapOf(
-                        "status" to "OK",
-                        "launched" to (intent.component?.className ?: "unknown")
-                    )
-                )
             }
-
-            // This endpoint is for receiving file *data* from the web UI
-            post("/send-file") {
-                val sourceNodeId = call.request.queryParameters["sourceNodeId"]
-                if (sourceNodeId != null) {
-                    // This call came from a peer, so the file is already being handled by the STREAM payload.
-                    // We just log it.
-                    val filename = call.request.queryParameters["filename"] ?: "unknown"
-                    val payloadId = call.request.queryParameters["payloadId"] ?: "unknown"
-                    logMessageCallback("Received file request for '$filename' (payloadId: $payloadId) from peer '$sourceNodeId'. Awaiting stream.")
-                    call.respond(HttpStatusCode.OK, "File request acknowledged from peer.")
-                    return@post
+            install(createApplicationPlugin(name = "RedirectFix") {
+                onCall { call ->
+                    val rawPath = call.request.path()
+                    logger.log("RedirectFix: raw path: \"$rawPath\"")
+                    val path = rawPath.trimStart('/')
+                    logger.log("RedirectFix: trimmed path: \"$path\"")
+                    AssetManager.getRedirectPath(service.applicationContext, path)?.let {
+                        logger.log("Redirecting to: \"$it\"")
+                        call.respondRedirect(it)
+                    }
                 }
-
-                // This is a new file upload from the local web UI
-                val multipart = call.receiveMultipart()
-                var responseSent = false
-                multipart.forEachPart { part ->
-                    if (part is PartData.FileItem) {
-                        val destinationPath = part.originalFileName ?: "unknown.bin"
-
-                        val tempFile = File(
-                            service.cacheDir,
-                            "upload_temp_${System.currentTimeMillis()}_${
-                                destinationPath.replace(
-                                    '/',
-                                    '_'
-                                )
-                            }"
+            })
+            routing {
+                get("/folders") {
+                    call.respond(AssetManager.getFolders(service.applicationContext))
+                }
+                get("/status") {
+                    call.respond(
+                        StatusResponse(
+                            status = service.currentState.javaClass.simpleName,
+                            id = service.endpointName,
+                            peerCount = service.nearbyConnectionsManager.connectedPeerCount,
+                            peerIds = service.nearbyConnectionsManager.connectedPeerIds
                         )
-                        part.provider().toInputStream().use { its ->
-                            // Save to a temporary file first
-                            tempFile.outputStream().use { fos ->
-                                its.copyTo(fos)
+                    )
+                }
+                post("/chat") {
+                    val params = call.receiveParameters()
+                    val message = params["message"] ?: "[empty]"
+                    val source = call.request.queryParameters["sourceNodeId"] ?: "local"
+                    logger.log("Chat from $source: $message")
+                    call.respond(mapOf("status" to "OK"))
+                }
+                get("/display") {
+                    val path = call.parameters["path"]
+                    if (path == null) {
+                        call.respond(HttpStatusCode.BadRequest, "Missing path parameter")
+                        return@get
+                    }
+                    val intent = Intent(service.applicationContext, DisplayActivity::class.java).apply {
+                        putExtra(DisplayActivity.EXTRA_PATH, path)
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                    }
+                    service.startActivity(intent)
+                    call.respond(
+                        mapOf(
+                            "status" to "OK",
+                            "launched" to (intent.component?.className ?: "unknown")
+                        )
+                    )
+                }
+                post("/send-file") {
+                    val sourceNodeId = call.request.queryParameters["sourceNodeId"]
+                    if (sourceNodeId != null) {
+                        val filename = call.request.queryParameters["filename"] ?: "unknown"
+                        val payloadId = call.request.queryParameters["payloadId"] ?: "unknown"
+                        logger.log("Received file request for '$filename' (payloadId: $payloadId) from peer '$sourceNodeId'. Awaiting stream.")
+                        call.respond(HttpStatusCode.OK, "File request acknowledged from peer.")
+                        return@post
+                    }
+                    val multipart = call.receiveMultipart()
+                    var responseSent = false
+                    multipart.forEachPart { part ->
+                        if (part is PartData.FileItem) {
+                            val destinationPath = part.originalFileName ?: "unknown.bin"
+                            val tempFile = File(
+                                service.cacheDir,
+                                "upload_temp_${System.currentTimeMillis()}_${destinationPath.replace('/', '_')}"
+                            )
+                            part.provider().toInputStream().use { its ->
+                                tempFile.outputStream().use { fos ->
+                                    its.copyTo(fos)
+                                }
+                                service.sendFile(tempFile, destinationPath)
+                                AssetManager.saveFile(
+                                    service.applicationContext,
+                                    destinationPath,
+                                    tempFile.inputStream()
+                                )
                             }
-                            // Then send it to peers
-                            service.sendFile(tempFile, destinationPath)
-                            // And also save it locally using the new AssetManager method
-                            AssetManager.saveFile(
-                                service.applicationContext,
-                                destinationPath,
-                                tempFile.inputStream()
+                            tempFile.delete()
+                            responseSent = true
+                            call.respond(
+                                mapOf(
+                                    "status" to HttpStatusCode.OK,
+                                    "file_status" to "file sending initiated",
+                                    "filename" to destinationPath
+                                )
                             )
                         }
-                        tempFile.delete() // Clean up the temporary file
-
-                        responseSent = true
+                        part.dispose()
+                    }
+                    if (!responseSent) {
                         call.respond(
-                            mapOf(
-                                "status" to HttpStatusCode.OK,
-                                "file_status" to "file sending initiated",
-                                "filename" to destinationPath
-                            )
+                            HttpStatusCode.BadRequest,
+                            "No file part found in multipart request."
                         )
                     }
-                    part.dispose()
                 }
-                if (!responseSent) {
-                    call.respond(
-                        HttpStatusCode.BadRequest,
-                        "No file part found in multipart request."
-                    )
+                post("/file-received") {
+                    val params = call.receiveParameters()
+                    val filename = params["filename"] ?: "unknown"
+                    val source = call.request.queryParameters["sourceNodeId"] ?: "local"
+                    logger.log("Notification: File '$filename' was successfully received from $source.")
+                    call.respond(mapOf("status" to HttpStatusCode.OK))
                 }
-            }
-
-            // This is a notification endpoint, not for data transfer
-            post("/file-received") {
-                val params = call.receiveParameters()
-                val filename = params["filename"] ?: "unknown"
-                val source = call.request.queryParameters["sourceNodeId"] ?: "local"
-                logMessageCallback("Notification: File '$filename' was successfully received from $source.")
-                call.respond(mapOf("status" to HttpStatusCode.OK))
-            }
-
-            /*
-            // This was moved to the RedirectFix plugin to avoid consuming requests meant for static files.
-            get("/{path...}") {
-                val path = call.parameters.getAll("path")?.joinToString("/") ?: ""
-                logMessageCallback("Redirect check for path: \"$path\"")
-                AssetManager.getRedirectPath(service.applicationContext, path)?.let {
-                    logMessageCallback("Redirecting to: \"$it\"")
-                    call.respondRedirect(it)
+                logger.log("Serving static files from: ${AssetManager.getFilesDir(service.applicationContext).absolutePath}")
+                staticFiles(
+                    "/",
+                    AssetManager.getFilesDir(service.applicationContext)
+                ) {
+                    default("index.html")
                 }
             }
-            */
-
-            // Serve all static content from the unpacked assets directory
-            logMessageCallback("Serving static files from: ${AssetManager.getFilesDir(service.applicationContext).absolutePath}")
-            staticFiles(
-                "/",
-                AssetManager.getFilesDir(service.applicationContext)
-            ) {
-                default("index.html")
-            }
-        }
-    }
-
-    fun start(): Boolean = runCatchingWithLogging({ msg, err ->
-        logErrorCallback(msg, err ?: Exception(msg))
-    }) {
-        logMessageCallback("Attempting to start LocalHttpServer...")
-        server.start(wait = false)
-        logMessageCallback("LocalHttpServer started successfully on port $PORT.")
+        }.start(wait = false)
+        logger.log("LocalHttpServer started successfully on port $PORT.")
         true
     } ?: false
 
     fun stop() {
-        server.stop(1000, 1000)
+        logger.log("Stopping Ktor server.")
+        if (this::server.isInitialized) {
+            server.stop(1000, 1000)
+        }
         httpClient.close()
     }
 
@@ -309,12 +269,10 @@ class LocalHttpServer(
      * Receives a request from a peer and dispatches it to the local Ktor server.
      */
     suspend fun dispatchRequest(wrapper: HttpRequestWrapper) =
-        runCatchingWithLogging({ msg, err ->
-            logErrorCallback(msg, err ?: Exception(msg))
-        }) {
+        runCatchingWithLogging(logger::e) {
             // Prevent re-dispatching a request that originated from this node
             if (wrapper.sourceNodeId == service.endpointName) {
-                logMessageCallback("Not dispatching own request: ${wrapper.path}")
+                logger.log("Not dispatching own request: ${wrapper.path}")
                 return@runCatchingWithLogging
             }
 
@@ -324,7 +282,7 @@ class LocalHttpServer(
                 "http://localhost:$PORT${wrapper.path}?sourceNodeId=${wrapper.sourceNodeId}"
             }
 
-            logMessageCallback("Dispatching request from ${wrapper.sourceNodeId}: ${wrapper.method} $url")
+            logger.log("Dispatching request from ${wrapper.sourceNodeId}: ${wrapper.method} $url")
 
             val response = httpClient.request(url) {
                 method = HttpMethod.parse(wrapper.method)
@@ -332,7 +290,7 @@ class LocalHttpServer(
                     setBody(TextContent(wrapper.body, ContentType.Application.FormUrlEncoded))
                 }
             }
-            logMessageCallback("Dispatched request '${wrapper.path}' from '${wrapper.sourceNodeId}' completed with status: ${response.status}")
+            logger.log("Dispatched request '${wrapper.path}' from '${wrapper.sourceNodeId}' completed with status: ${response.status}")
         }
 
     companion object {

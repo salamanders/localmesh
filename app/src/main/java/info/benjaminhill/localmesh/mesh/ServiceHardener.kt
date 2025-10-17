@@ -1,5 +1,8 @@
 package info.benjaminhill.localmesh.mesh
 
+import android.content.Context
+import android.os.PowerManager
+import info.benjaminhill.localmesh.util.AppLogger
 import info.benjaminhill.localmesh.util.GlobalExceptionHandler.runCatchingWithLogging
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
@@ -9,17 +12,28 @@ import kotlinx.coroutines.runBlocking
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.random.Random
 
-class HeartbeatManager(
+class ServiceHardener(
     private val service: BridgeService,
+    private val logger: AppLogger
 ) {
+
+    private var wakeLock: PowerManager.WakeLock? = null
     private lateinit var scheduler: ScheduledExecutorService
     private val client = HttpClient(CIO)
 
+    private val _lastP2pMessageTime = AtomicLong(0L)
+    private val _lastWebViewReportTime = AtomicLong(0L)
+
     fun start() {
+        logger.log("ServiceHardener starting.")
+        acquireWakeLock()
+        resetTimestamps()
+
         if (::scheduler.isInitialized && !scheduler.isShutdown) {
-            service.sendLogMessage("HeartbeatManager already running.")
+            logger.log("Hardener scheduler already running.")
             return
         }
         scheduler = Executors.newSingleThreadScheduledExecutor()
@@ -30,25 +44,40 @@ class HeartbeatManager(
             CHECK_INTERVAL_MINUTES,
             TimeUnit.MINUTES
         )
-        service.sendLogMessage("HeartbeatManager started with initial delay of $initialDelay seconds.")
+        logger.log("Hardener scheduler started with initial delay of $initialDelay seconds.")
     }
 
     fun stop() {
+        logger.log("ServiceHardener stopping.")
+        releaseWakeLock()
         if (::scheduler.isInitialized && !scheduler.isShutdown) {
             scheduler.shutdown()
-            runCatchingWithLogging(service::logError) {
+            runCatchingWithLogging(logger::e) {
                 if (!scheduler.awaitTermination(5, TimeUnit.SECONDS)) {
                     scheduler.shutdownNow()
                 }
             }
         }
         client.close()
-        service.sendLogMessage("HeartbeatManager stopped.")
+        logger.log("Hardener scheduler stopped.")
+    }
+
+    fun updateP2pMessageTime() {
+        _lastP2pMessageTime.set(System.currentTimeMillis())
+    }
+
+    fun updateWebViewReportTime() {
+        _lastWebViewReportTime.set(System.currentTimeMillis())
+    }
+
+    fun resetTimestamps() {
+        val now = System.currentTimeMillis()
+        _lastP2pMessageTime.set(now)
+        _lastWebViewReportTime.set(now)
     }
 
     private fun runChecks() {
-        service.sendLogMessage("Running heartbeat checks...")
-        // Run all checks and collect failure messages
+        logger.log("Running hardener checks...")
         val failureMessages = mutableListOf<String>()
 
         if (!isWebServerHealthy()) {
@@ -62,20 +91,20 @@ class HeartbeatManager(
         }
 
         if (failureMessages.isEmpty()) {
-            service.sendLogMessage("Heartbeat checks passed.")
+            logger.log("Hardener checks passed.")
         } else {
             val reason = failureMessages.joinToString(" ")
-            service.sendLogMessage("Heartbeat failure detected: $reason. Restarting service.")
+            logger.e("Hardener failure detected: $reason. Restarting service.")
             service.restart()
         }
     }
 
-    private fun isWebServerHealthy(): Boolean = runCatchingWithLogging(service::logError) {
+    private fun isWebServerHealthy(): Boolean = runCatchingWithLogging(logger::e) {
         runBlocking {
             val response = client.get("http://127.0.0.1:8099/status")
             val healthy = response.status.value in 200..299 && response.bodyAsText().isNotEmpty()
             if (!healthy) {
-                service.sendLogMessage("Web server health check failed with status ${response.status.value}")
+                logger.e("Web server health check failed with status ${response.status.value}")
             }
             healthy
         }
@@ -84,18 +113,15 @@ class HeartbeatManager(
     private fun isP2pNetworkHealthy(): Boolean {
         val now = System.currentTimeMillis()
         val uptime = now - service.serviceStartTime
-        val timeSinceLastMessage = now - service.lastP2pMessageTime
+        val timeSinceLastMessage = now - _lastP2pMessageTime.get()
 
-        // After 5 minutes of uptime, we must have at least one peer.
         if (uptime > FIVE_MINUTES_MS && service.nearbyConnectionsManager.connectedPeerCount == 0) {
-            service.sendLogMessage("P2P Health Fail: No peers connected after ${uptime / 1000}s.")
+            logger.e("P2P Health Fail: No peers connected after ${uptime / 1000}s.")
             return false
         }
 
-        // If we have peers, we must have received a message in the last 5 minutes.
-        // This doesn't apply if we are the only one on the network.
         if (service.nearbyConnectionsManager.connectedPeerCount > 0 && timeSinceLastMessage > FIVE_MINUTES_MS) {
-            service.sendLogMessage("P2P Health Fail: No messages for ${timeSinceLastMessage / 1000}s.")
+            logger.e("P2P Health Fail: No messages for ${timeSinceLastMessage / 1000}s.")
             return false
         }
 
@@ -104,19 +130,37 @@ class HeartbeatManager(
 
     private fun isWebViewHealthy(): Boolean {
         val now = System.currentTimeMillis()
-        val timeSinceLastWebViewUpdate = now - service.lastWebViewReportTime
-        // If it's been over 2 minutes since the last webview report, something is wrong.
-        // The check is every minute, so this gives it a buffer.
+        val timeSinceLastWebViewUpdate = now - _lastWebViewReportTime.get()
         if (timeSinceLastWebViewUpdate > WEBVIEW_TIMEOUT_MS) {
-            service.sendLogMessage("WebView Health Fail: No report for ${timeSinceLastWebViewUpdate / 1000}s.")
+            logger.e("WebView Health Fail: No report for ${timeSinceLastWebViewUpdate / 1000}s.")
             return false
         }
         return true
+    }
+
+    private fun acquireWakeLock() {
+        releaseWakeLock() // Ensure no existing lock is held
+        val powerManager = service.getSystemService(Context.POWER_SERVICE) as PowerManager
+        wakeLock = powerManager.run {
+            newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "LocalMesh::WakeLock").apply {
+                acquire(WAKELOCK_TIMEOUT_MS)
+            }
+        }
+        logger.log("Wakelock acquired.")
+    }
+
+    private fun releaseWakeLock() {
+        if (wakeLock?.isHeld == true) {
+            wakeLock?.release()
+            logger.log("Wakelock released.")
+        }
+        wakeLock = null
     }
 
     companion object {
         private const val CHECK_INTERVAL_MINUTES = 5L
         private const val FIVE_MINUTES_MS = CHECK_INTERVAL_MINUTES * 60 * 1000L
         private const val WEBVIEW_TIMEOUT_MS = 2 * 60 * 1000L
+        private const val WAKELOCK_TIMEOUT_MS = 4 * 60 * 60 * 1000L // 4 hours
     }
 }
