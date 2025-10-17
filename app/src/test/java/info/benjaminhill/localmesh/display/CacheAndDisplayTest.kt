@@ -25,7 +25,6 @@ import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import java.io.File
 import java.nio.charset.Charset
-import android.util.Log
 
 /**
  * Tests the file caching and display functionality of the application.
