@@ -83,6 +83,8 @@ The system is composed of three main components:
     * `NearbyConnectionsManager`: The core of the P2P functionality. It uses the Google Play
       Services Nearby Connections API (`P2P_CLUSTER` strategy) to manage the mesh network, handling
       discovery, connections, and payload transfer.
+    * `ServiceHardener`: A watchdog that monitors the health of the application and restarts it if
+      it becomes unresponsive.
 
 * **Peers:** Other Android devices on the same local network running the LocalMesh app.
 
@@ -207,20 +209,27 @@ The Ktor server in `LocalHttpServer.kt` defines the following routes:
 
 ### Test Workflow
 
-1. **Build and Grant Permissions:** Build a fresh debug APK. Then, install it using the `-g` flag, which automatically grants all
+1. **Build and Grant Permissions:** Build a fresh debug APK. Then, install it using the `-g` flag,
+   which automatically grants all
    permissions declared in the manifest. This is the critical first step to enabling a UI-less
    startup.
-2. **Automated App Launch:** Use `adb` to start the `MainActivity`, passing the special `auto_start` boolean extra. This flag
+2. **Automated App Launch:** Use `adb` to start the `MainActivity`, passing the special `auto_start`
+   boolean extra. This flag
    is the testing hook that tells the activity to bypass the "Start Service" button and immediately
-   trigger the service launch sequence. The app will briefly flash on screen and then proceed directly to the main web UI, with the
+   trigger the service launch sequence. The app will briefly flash on screen and then proceed
+   directly to the main web UI, with the
    `BridgeService` running in the background.
-3. **Forward the Device Port:** Forward the device's port to your local machine to enable `curl` commands.
-4. **Trigger an Action via API:** Use `curl` to send commands to the app's local server. To test a peer command, you must include a
+3. **Forward the Device Port:** Forward the device's port to your local machine to enable `curl`
+   commands.
+4. **Trigger an Action via API:** Use `curl` to send commands to the app's local server. To test a
+   peer command, you must include a
    `sourceNodeId`.
-5. **Monitor for Proof:** Check `logcat` for logs confirming the action was received and executed correctly. Note: make
+5. **Monitor for Proof:** Check `logcat` for logs confirming the action was received and executed
+   correctly. Note: make
    sure you aren't reading a previous run's logcat. Clear the logcat if necessary.
 6. **Clean Up:**
-   Remove the port forwarding rule when you are finished. If the issue is still being debugged, skip this step.
+   Remove the port forwarding rule when you are finished. If the issue is still being debugged, skip
+   this step.
 
 ```bash
 ./gradlew assembleDebug
@@ -268,6 +277,8 @@ adb logcat -d DisplayActivity:I WebViewScreen:I *:S
   message showing the expected behavior occurred.
 * **Utilize `adb` for control.** It is a reliable way to interact with the app.
 * **The process ID changes on every run.** Assume it has changed and filter logs accordingly.
+* **Utilize the User**: If you have to make 10+ search-and-replace, ask the user to do it rather
+  than eat up Gemini tokens. The same applies for any "easy to do with an IDE" bulk change.
 
 ### Sticking Points
 
@@ -280,3 +291,70 @@ mistakes. All strategies must be checked to avoid the following pitfalls:
 * Incorrectly using file modification tools.
 * Misinterpreting logs and incorrectly announcing success.
 * Failing to follow a step-by-step verification process.
+
+## 10. Main Application Flows
+
+These are the primary user-facing flows in the application.
+
+### Main Display Flow
+
+1. **App Start**: The user opens the app and is presented with the `MainActivity`.
+2. **Service Start**: The user clicks "Start Service", which starts the `BridgeService` and launches
+   the `DisplayActivity`.
+3. **WebView Load**: The `DisplayActivity` loads the main `index.html` page in a `WebView`.
+4. **Folder List Request**: The `main.js` in the `WebView` makes a `GET` request to `/folders`.
+5. **Folder List Response**: The `LocalHttpServer` receives the request and gets the list of folders
+   from the `AssetManager`.
+6. **Folder Display**: The `main.js` receives the list of folders and displays them on the page.
+7. **Folder Click**: The user clicks on a folder (e.g., "eye").
+8. **Display Request**: The `main.js` sends a `GET` request to `/display?path=eye`.
+9. **Broadcast**: The `p2pBroadcastInterceptor` intercepts the request and broadcasts it to all
+   peers.
+10. **Peer Reception**: A peer receives the `HttpRequestWrapper` and its `BridgeService` dispatches
+    it to its `LocalHttpServer`.
+11. **Display Activity Launch**: The peer's `LocalHttpServer` receives the request and starts a
+    `DisplayActivity` with the "eye" path.
+12. **"eye" Display**: The `DisplayActivity` on the peer's device loads the `index.html` from the "
+    eye" folder.
+
+### Chat Flow
+
+1. **User Input**: The user types a message in the chat input box on the `index.html` page and
+   clicks "Send".
+2. **Chat Request**: The `main.js` sends a `POST` request to `/chat` with the message in the body.
+3. **Broadcast**: The `p2pBroadcastInterceptor` intercepts the request and broadcasts it to all
+   peers.
+4. **Peer Reception**: A peer receives the `HttpRequestWrapper` and its `BridgeService` dispatches
+   it to its `LocalHttpServer`.
+5. **Chat Message Handling**: The peer's `LocalHttpServer` receives the request and logs the chat
+   message.
+6. **UI Update**: The `main.js` on all devices (including the sender) will eventually be updated to
+   display the new chat message (this part is not yet implemented).
+
+### File Transfer Flow
+
+1. **File Selection**: The user selects a file (e.g., `my_cool_visualization.html`) to send using
+   the file input on the `index.html` page.
+2. **File Upload**: The `main.js` sends a `multipart/form-data` `POST` request to `/send-file` with
+   the file data, specifying a destination path (e.g., `/web/bats/index.html`).
+3. **File Save and Broadcast**: The `LocalHttpServer` saves the file to a temporary location (e.g.,
+   `app/src/main/assets/web/bats/index.html`), and then calls `BridgeService.sendFile()`.
+4. **Broadcast Command and Stream**: The `BridgeService` broadcasts an `HttpRequestWrapper` for
+   `POST /send-file` with the filename (`/web/bats/index.html`) and a unique `payloadId`, and also
+   sends the file content as a `Payload.Stream`.
+5. **Peer Receives Command**: The peer's `BridgeService` receives the `HttpRequestWrapper` and
+   stores the filename and `payloadId`.
+6. **Peer Receives Stream**: The peer's `BridgeService` receives the `Payload.Stream`, looks up the
+   filename using the `payloadId`, and saves the file to its local cache at the specified path (
+   e.g., `app/src/main/assets/web/bats/index.html`). This effectively adds a new visualization or
+   content to the peer's available assets.
+7. **UI Update**: The `main.js` on all devices will eventually be updated to show the newly
+   transferred file (this part is not yet implemented).
+
+### Status Flow
+
+1. **Status Request**: The `main.js` in the `WebView` makes a `GET` request to `/status`.
+2. **Status Response**: The `LocalHttpServer` receives the request and responds with a JSON object
+   containing the service status, device ID, and a list of connected peers.
+3. **Status Display**: The `main.js` receives the status and updates the UI to display the number of
+   connected peers.

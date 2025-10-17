@@ -20,7 +20,7 @@ import info.benjaminhill.localmesh.MainActivity
 import info.benjaminhill.localmesh.R
 import info.benjaminhill.localmesh.util.AppLogger
 import info.benjaminhill.localmesh.util.AssetManager
-import info.benjaminhill.localmesh.util.GlobalExceptionHandler.runCatchingWithLogging
+
 import info.benjaminhill.localmesh.util.PermissionUtils
 import io.ktor.http.parseUrlEncodedParameters
 import kotlinx.coroutines.CoroutineDispatcher
@@ -30,6 +30,16 @@ import kotlinx.coroutines.launch
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
+
+/**
+ * Orchestrates the entire application, acting as the central hub for all components.
+ * This class is a foreground service, meaning it will keep the application alive and running
+ * even when the UI is not visible. It is responsible for initializing and managing the lifecycle
+ * of the `NearbyConnectionsManager`, `LocalHttpServer`, and `ServiceHardener`.
+ * It also handles the routing of incoming P2P messages to the appropriate components.
+ * This class does not handle any UI, and it does not directly handle any networking.
+ * It is surprising that this class has to handle file payloads in two parts, first the metadata, then the stream.
+ */
 class BridgeService : Service() {
     var currentState: BridgeState = BridgeState.Idle
         internal set
@@ -54,8 +64,7 @@ class BridgeService : Service() {
 
         logger = AppLogger(TAG, LogFileWriter(applicationContext))
 
-        runCatchingWithLogging(logger::e) {
-            endpointName =
+        logger.runCatchingWithLogging {
                 (('A'..'Z') + ('a'..'z') + ('0'..'9')).shuffled().take(5).joinToString("").also {
                     logger.log("This node is now named: $it")
                 }
@@ -88,7 +97,7 @@ class BridgeService : Service() {
 
     internal fun handleBytesPayload(payload: Payload) {
         serviceHardener.updateP2pMessageTime()
-        runCatchingWithLogging(logger::e) {
+        logger.runCatchingWithLogging {
             val jsonString = payload.asBytes()!!.toString(Charsets.UTF_8)
             val wrapper = HttpRequestWrapper.fromJson(jsonString)
 
@@ -114,7 +123,7 @@ class BridgeService : Service() {
             logger.e("Received stream payload with unknown ID: ${payload.id}")
             return
         }
-        runCatchingWithLogging(logger::e) {
+        logger.runCatchingWithLogging {
             payload.asStream()?.asInputStream()?.use { inputStream ->
                 AssetManager.saveFile(applicationContext, filename, inputStream)
             }
@@ -215,14 +224,13 @@ class BridgeService : Service() {
             return false
         }
 
-        val requiredPermissions = PermissionUtils.getDangerousPermissions(this)
-        for (permission in requiredPermissions) {
-            if (checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) {
-                logger.e("Permission not granted: $permission")
-                return false
+        return PermissionUtils.getDangerousPermissions(this).all { permission ->
+            (checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED).also {
+                if (!it) {
+                    logger.e("Permission not granted: $permission")
+                }
             }
         }
-        return true
     }
 
     private fun stop() {

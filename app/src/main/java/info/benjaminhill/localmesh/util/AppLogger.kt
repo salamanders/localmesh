@@ -25,4 +25,13 @@ class AppLogger(
             logFileWriter.writeLog("ERROR: $message")
         }
     }
+
+    inline fun <T> runCatchingWithLogging(block: () -> T): T? {
+        return try {
+            block()
+        } catch (e: Throwable) {
+            e("Exception caught: ${e.message}", e)
+            null
+        }
+    }
 }

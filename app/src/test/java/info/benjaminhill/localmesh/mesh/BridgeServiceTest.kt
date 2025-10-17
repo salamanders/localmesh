@@ -2,7 +2,6 @@ package info.benjaminhill.localmesh.mesh
 
 import com.google.android.gms.nearby.connection.Payload
 import info.benjaminhill.localmesh.LocalHttpServer
-import info.benjaminhill.localmesh.LogFileWriter
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
@@ -15,6 +14,14 @@ import org.mockito.kotlin.verify
 import org.powermock.reflect.Whitebox
 import org.robolectric.RobolectricTestRunner
 
+/**
+ * Tests the `BridgeService` class.
+ * This class tests the ability of the `BridgeService` to handle incoming byte payloads
+ * and dispatch them to the `LocalHttpServer`. This class does not test the P2P
+ * communication itself, but rather the handling of the byte payloads after they
+ * have been received. It is surprising that this class uses `Whitebox` to set
+ * internal state on the `BridgeService`.
+ */
 @RunWith(RobolectricTestRunner::class)
 @ExperimentalCoroutinesApi
 class BridgeServiceTest {

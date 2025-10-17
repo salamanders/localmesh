@@ -3,6 +3,14 @@ package info.benjaminhill.localmesh.mesh
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
+/**
+ * Tests the `HttpRequestWrapper` class.
+ * This class tests the ability of the `HttpRequestWrapper` to be serialized to JSON
+ * and then deserialized back to an `HttpRequestWrapper` object. This class does not
+ * test the P2P communication itself, but rather the serialization and
+ * deserialization of the `HttpRequestWrapper`. It is surprising that this class
+ * is so simple.
+ */
 class HttpRequestWrapperTest {
 
     @Test

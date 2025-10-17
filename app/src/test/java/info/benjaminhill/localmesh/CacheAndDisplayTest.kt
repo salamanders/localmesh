@@ -26,6 +26,14 @@ import org.robolectric.RobolectricTestRunner
 import java.io.File
 import java.nio.charset.Charset
 
+/**
+ * Tests the file caching and display functionality of the application.
+ * This class tests the ability of the application to receive a file from a peer,
+ * cache it to the local file system, and then serve it via the local HTTP server.
+ * This class does not test the P2P communication itself, but rather the handling
+ * of the file after it has been received. It is surprising that this class uses
+ * Robolectric to create a real `BridgeService` instance.
+ */
 @RunWith(RobolectricTestRunner::class)
 class CacheAndDisplayTest {
 

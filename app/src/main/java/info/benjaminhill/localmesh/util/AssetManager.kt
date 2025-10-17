@@ -51,18 +51,21 @@ object AssetManager {
         if (path.isEmpty()) {
             return null
         }
-        val pathNoSlash = path.trim().removeSuffix("/")
+        val pathNoSlash = path.trim()
+            .removeSuffix("/")
+            .removePrefix("/")
         val file = File(getFilesDir(context), pathNoSlash)
-        if (file.isDirectory && File(file, "index.html").exists()) {
-            return "$pathNoSlash/index.html"
+        return when {
+            !file.isDirectory -> null
+            File(file, "index.html").exists() -> "$pathNoSlash/index.html"
+            else -> {
+                Log.e(
+                    TAG,
+                    "Tried to navigate to a directory without an index.html? ${file.absolutePath}"
+                )
+                null
+            }
         }
-        if (file.isDirectory) {
-            Log.e(
-                TAG,
-                "Tried to navigate to a directory without an index.html? ${file.absolutePath}"
-            )
-        }
-        return null
     }
 
     /** Copies the defaults to the folder, only if they don't already exist (safe to run every startup, won't clobber distributed files */
@@ -78,17 +81,17 @@ object AssetManager {
                 false
             }
 
-            if (isDir) {
-                copyAssetDir(context, assetPath, destFile)
-            } else if (!destFile.exists()) {
-                runCatching {
-                    Files.copy(context.assets.open(assetPath), destFile.toPath())
-                    Log.d(TAG, "Copied $assetPath to ${destFile.absolutePath}")
-                }.onFailure { e ->
-                    Log.e(TAG, "Failed to copy asset file: $assetPath", e)
+            when {
+                isDir -> copyAssetDir(context, assetPath, destFile)
+                !destFile.exists() -> {
+                    runCatching {
+                        Files.copy(context.assets.open(assetPath), destFile.toPath())
+                        Log.d(TAG, "Copied $assetPath to ${destFile.absolutePath}")
+                    }.onFailure { e ->
+                        Log.e(TAG, "Failed to copy asset file: $assetPath", e)
+                    }
                 }
-            } else {
-                Log.d(TAG, "Skipping $assetPath, already exists")
+                else -> Log.d(TAG, "Skipping $assetPath, already exists")
             }
         }
     }

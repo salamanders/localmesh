@@ -3,7 +3,7 @@ package info.benjaminhill.localmesh.mesh
 import android.content.Context
 import android.os.PowerManager
 import info.benjaminhill.localmesh.util.AppLogger
-import info.benjaminhill.localmesh.util.GlobalExceptionHandler.runCatchingWithLogging
+
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.request.get
@@ -15,6 +15,14 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.random.Random
 
+/**
+ * A watchdog that monitors the health of the application and restarts it if it becomes unresponsive.
+ * This class is responsible for acquiring a wakelock to keep the device awake, and for scheduling
+ * periodic checks of the web server, P2P network, and WebView. If any of these components
+ * are found to be unhealthy, the service is restarted. This class does not handle any UI,
+ * and it does not directly handle any networking. It is surprising that this class uses
+ * `runBlocking` to perform network requests on the main thread.
+ */
 class ServiceHardener(
     private val service: BridgeService,
     private val logger: AppLogger
@@ -52,7 +60,7 @@ class ServiceHardener(
         releaseWakeLock()
         if (::scheduler.isInitialized && !scheduler.isShutdown) {
             scheduler.shutdown()
-            runCatchingWithLogging(logger::e) {
+            logger.runCatchingWithLogging {
                 if (!scheduler.awaitTermination(5, TimeUnit.SECONDS)) {
                     scheduler.shutdownNow()
                 }
@@ -78,16 +86,10 @@ class ServiceHardener(
 
     private fun runChecks() {
         logger.log("Running hardener checks...")
-        val failureMessages = mutableListOf<String>()
-
-        if (!isWebServerHealthy()) {
-            failureMessages.add("Web server is not responsive.")
-        }
-        if (!isP2pNetworkHealthy()) {
-            failureMessages.add("P2P network is unhealthy.")
-        }
-        if (!isWebViewHealthy()) {
-            failureMessages.add("WebView appears frozen.")
+        val failureMessages = buildList {
+            if (!isWebServerHealthy()) add("Web server is not responsive.")
+            if (!isP2pNetworkHealthy()) add("P2P network is unhealthy.")
+            if (!isWebViewHealthy()) add("WebView appears frozen.")
         }
 
         if (failureMessages.isEmpty()) {
@@ -99,7 +101,7 @@ class ServiceHardener(
         }
     }
 
-    private fun isWebServerHealthy(): Boolean = runCatchingWithLogging(logger::e) {
+    private fun isWebServerHealthy(): Boolean = logger.runCatchingWithLogging {
         runBlocking {
             val response = client.get("http://127.0.0.1:8099/status")
             val healthy = response.status.value in 200..299 && response.bodyAsText().isNotEmpty()
@@ -131,11 +133,11 @@ class ServiceHardener(
     private fun isWebViewHealthy(): Boolean {
         val now = System.currentTimeMillis()
         val timeSinceLastWebViewUpdate = now - _lastWebViewReportTime.get()
-        if (timeSinceLastWebViewUpdate > WEBVIEW_TIMEOUT_MS) {
-            logger.e("WebView Health Fail: No report for ${timeSinceLastWebViewUpdate / 1000}s.")
-            return false
+        return (timeSinceLastWebViewUpdate <= WEBVIEW_TIMEOUT_MS).also {
+            if (!it) {
+                logger.e("WebView Health Fail: No report for ${timeSinceLastWebViewUpdate / 1000}s.")
+            }
         }
-        return true
     }
 
     private fun acquireWakeLock() {

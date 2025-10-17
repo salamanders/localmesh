@@ -5,6 +5,13 @@ import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.util.Log
 
+/**
+ * A utility object for working with Android permissions.
+ * This object provides a simple way to get all dangerous permissions declared in the manifest.
+ * This is unusual because it is a utility object, but it is not a class.
+ * It does not do anything other than get the dangerous permissions.
+ * It is surprising that this is an object instead of a class with static methods.
+ */
 object PermissionUtils {
 
     /**

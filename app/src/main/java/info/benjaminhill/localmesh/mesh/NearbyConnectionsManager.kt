@@ -17,7 +17,7 @@ import com.google.android.gms.nearby.connection.PayloadCallback
 import com.google.android.gms.nearby.connection.PayloadTransferUpdate
 import com.google.android.gms.nearby.connection.Strategy
 import info.benjaminhill.localmesh.util.AppLogger
-import info.benjaminhill.localmesh.util.GlobalExceptionHandler.runCatchingWithLogging
+
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -75,7 +75,7 @@ class NearbyConnectionsManager(
     }
 
     fun sendPayload(endpointIds: List<String>, payload: Payload) =
-        runCatchingWithLogging(logger::e) {
+        logger.runCatchingWithLogging {
             logger.log("NearbyConnectionsManager.sendPayload() to ${endpointIds.size} endpoints.")
             connectionsClient.sendPayload(endpointIds, payload)
                 .addOnFailureListener { e ->
@@ -93,7 +93,7 @@ class NearbyConnectionsManager(
     val connectedPeerIds: List<String>
         get() = connectedEndpoints.toList()
 
-    private suspend fun startAdvertising() = runCatchingWithLogging(logger::e) {
+    private suspend fun startAdvertising() = logger.runCatchingWithLogging {
         withContext(Dispatchers.IO) {
             val advertisingOptions =
                 AdvertisingOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).build()
@@ -110,7 +110,7 @@ class NearbyConnectionsManager(
         }
     }
 
-    private suspend fun startDiscovery() = runCatchingWithLogging(logger::e) {
+    private suspend fun startDiscovery() = logger.runCatchingWithLogging {
         withContext(Dispatchers.IO) {
             val discoveryOptions =
                 DiscoveryOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).build()
@@ -128,13 +128,13 @@ class NearbyConnectionsManager(
 
     private val payloadCallback = object : PayloadCallback() {
         override fun onPayloadReceived(endpointId: String, payload: Payload) {
-            runCatchingWithLogging(logger::e) {
+            logger.runCatchingWithLogging {
                 payloadReceivedCallback(endpointId, payload)
             }
         }
 
         override fun onPayloadTransferUpdate(endpointId: String, update: PayloadTransferUpdate) {
-            runCatchingWithLogging(logger::e) {
+            logger.runCatchingWithLogging {
                 when (update.status) {
                     PayloadTransferUpdate.Status.SUCCESS ->
                         logger.log("SUCCESS: Payload ${update.payloadId} transfer to $endpointId complete.")
@@ -159,7 +159,7 @@ class NearbyConnectionsManager(
     private val connectionLifecycleCallback: ConnectionLifecycleCallback =
         object : ConnectionLifecycleCallback() {
             override fun onConnectionInitiated(endpointId: String, connectionInfo: ConnectionInfo) {
-                runCatchingWithLogging(logger::e) {
+                logger.runCatchingWithLogging {
                     logger.log("onConnectionInitiated from ${connectionInfo.endpointName} (id:$endpointId)")
                     connectionsClient.acceptConnection(endpointId, payloadCallback)
                         .addOnFailureListener { e ->
@@ -204,7 +204,7 @@ class NearbyConnectionsManager(
     }
 
     private fun requestConnection(endpointId: String) {
-        runCatchingWithLogging(logger::e) {
+        logger.runCatchingWithLogging {
             connectionsClient.requestConnection(
                 endpointName,
                 endpointId,

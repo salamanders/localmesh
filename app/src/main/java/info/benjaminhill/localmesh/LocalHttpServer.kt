@@ -5,7 +5,7 @@ import info.benjaminhill.localmesh.util.AppLogger
 import info.benjaminhill.localmesh.mesh.BridgeService
 import info.benjaminhill.localmesh.mesh.HttpRequestWrapper
 import info.benjaminhill.localmesh.util.AssetManager
-import info.benjaminhill.localmesh.util.GlobalExceptionHandler.runCatchingWithLogging
+
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.request.request
@@ -18,7 +18,6 @@ import io.ktor.http.content.TextContent
 import io.ktor.http.content.forEachPart
 import io.ktor.http.formUrlEncode
 import io.ktor.serialization.kotlinx.json.json
-import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.createApplicationPlugin
 import io.ktor.server.application.install
 import io.ktor.server.engine.embeddedServer
@@ -121,7 +120,7 @@ class LocalHttpServer(
 
     private lateinit var server: io.ktor.server.engine.EmbeddedServer<io.ktor.server.cio.CIOApplicationEngine, io.ktor.server.cio.CIOApplicationEngine.Configuration>
 
-    fun start(): Boolean = runCatchingWithLogging(logger::e) {
+    fun start(): Boolean = logger.runCatchingWithLogging {
         logger.log("Attempting to start LocalHttpServer...")
         server = embeddedServer(KtorCIO, port = PORT) {
             install(ContentNegotiation) {
@@ -269,7 +268,7 @@ class LocalHttpServer(
      * Receives a request from a peer and dispatches it to the local Ktor server.
      */
     suspend fun dispatchRequest(wrapper: HttpRequestWrapper) =
-        runCatchingWithLogging(logger::e) {
+        logger.runCatchingWithLogging {
             // Prevent re-dispatching a request that originated from this node
             if (wrapper.sourceNodeId == service.endpointName) {
                 logger.log("Not dispatching own request: ${wrapper.path}")

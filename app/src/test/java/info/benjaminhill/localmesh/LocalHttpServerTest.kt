@@ -32,6 +32,14 @@ import org.mockito.kotlin.verify
 import org.robolectric.RobolectricTestRunner
 import java.io.File
 
+/**
+ * Tests the `LocalHttpServer` class.
+ * This class tests the ability of the `LocalHttpServer` to serve static files,
+ * handle API requests, and broadcast messages to peers. This class does not
+ * test the P2P communication itself, but rather the handling of the HTTP
+ * requests and responses. It is surprising that this class uses a mock
+ * `BridgeService` to test the `LocalHttpServer`.
+ */
 @RunWith(RobolectricTestRunner::class)
 class LocalHttpServerTest {
 
