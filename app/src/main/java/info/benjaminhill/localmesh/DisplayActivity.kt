@@ -107,7 +107,7 @@ class DisplayActivity : ComponentActivity() {
             }
             webView.evaluateJavascript("\"ok\"") { result ->
                 if (result == "\"ok\"") {
-                    bridgeService?.updateWebViewReportTime()
+                    bridgeService?.serviceHardener?.updateWebViewReportTime()
                     Log.d(TAG, "WebView heartbeat sent.")
                 } else {
                     Log.w(

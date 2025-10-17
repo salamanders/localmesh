@@ -25,6 +25,7 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.mockito.kotlin.any
+import info.benjaminhill.localmesh.util.AppLogger
 import org.mockito.kotlin.doReturn
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.verify
@@ -40,17 +41,17 @@ class LocalHttpServerTest {
     private lateinit var server: LocalHttpServer
     private lateinit var mockBridgeService: BridgeService
     private lateinit var mockNearbyConnectionsManager: NearbyConnectionsManager
-    private val loggedMessages = mutableListOf<String>()
+    private lateinit var mockLogger: AppLogger
 
     @Before
     fun setUp() {
-        loggedMessages.clear()
         mockNearbyConnectionsManager = mock()
         mockBridgeService = mock {
             on { endpointName } doReturn "test-endpoint"
             on { currentState } doReturn BridgeState.Running
             on { nearbyConnectionsManager } doReturn mockNearbyConnectionsManager
         }
+        mockLogger = mock()
     }
 
     @After
@@ -67,7 +68,7 @@ class LocalHttpServerTest {
             on { filesDir } doReturn tempFolder.newFolder()
         }
         doReturn(mockContext).`when`(mockBridgeService).applicationContext
-        server = LocalHttpServer(mockBridgeService, { loggedMessages.add(it) }, { _, _ -> })
+        server = LocalHttpServer(mockBridgeService, mockLogger)
         server.start()
         doReturn(3).`when`(mockNearbyConnectionsManager).connectedPeerCount
         doReturn(listOf("peer1", "peer2", "peer3")).`when`(mockNearbyConnectionsManager).connectedPeerIds
@@ -94,7 +95,7 @@ class LocalHttpServerTest {
             on { filesDir } doReturn tempFolder.newFolder()
         }
         doReturn(mockContext).`when`(mockBridgeService).applicationContext
-        server = LocalHttpServer(mockBridgeService, { loggedMessages.add(it) }, { _, _ -> })
+        server = LocalHttpServer(mockBridgeService, mockLogger)
         server.start()
         val client = HttpClient(CIO)
         val message = "Hello, peers!"
@@ -132,7 +133,7 @@ class LocalHttpServerTest {
         }
         doReturn(mockContext).`when`(mockBridgeService).applicationContext
 
-        server = LocalHttpServer(mockBridgeService, { loggedMessages.add(it) }, { _, _ -> })
+        server = LocalHttpServer(mockBridgeService, mockLogger)
         server.start()
 
         // When
@@ -163,7 +164,7 @@ class LocalHttpServerTest {
         }
         doReturn(mockContext).`when`(mockBridgeService).applicationContext
 
-        server = LocalHttpServer(mockBridgeService, { loggedMessages.add(it) }, { _, _ -> })
+        server = LocalHttpServer(mockBridgeService, mockLogger)
         server.start()
 
         // When
@@ -184,7 +185,7 @@ class LocalHttpServerTest {
             on { filesDir } doReturn tempFolder.newFolder()
         }
         doReturn(mockContext).`when`(mockBridgeService).applicationContext
-        server = LocalHttpServer(mockBridgeService, { loggedMessages.add(it) }, { _, _ -> })
+        server = LocalHttpServer(mockBridgeService, mockLogger)
         server.start()
         val client = HttpClient(CIO)
 
@@ -214,7 +215,7 @@ class LocalHttpServerTest {
         }
         doReturn(mockContext).`when`(mockBridgeService).applicationContext
 
-        server = LocalHttpServer(mockBridgeService, { loggedMessages.add(it) }, { _, _ -> })
+        server = LocalHttpServer(mockBridgeService, mockLogger)
         server.start()
 
         // When

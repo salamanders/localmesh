@@ -9,8 +9,10 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import info.benjaminhill.localmesh.util.AppLogger
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.verify
+import org.powermock.reflect.Whitebox
 import org.robolectric.RobolectricTestRunner
 
 @RunWith(RobolectricTestRunner::class)
@@ -20,7 +22,7 @@ class BridgeServiceTest {
     private lateinit var service: BridgeService
     private lateinit var mockNearbyConnectionsManager: NearbyConnectionsManager
     private lateinit var mockLocalHttpServer: LocalHttpServer
-    private lateinit var mockLogFileWriter: LogFileWriter
+    private lateinit var mockServiceHardener: ServiceHardener
     private val testDispatcher = StandardTestDispatcher()
 
     @Before
@@ -28,15 +30,16 @@ class BridgeServiceTest {
         // Mock dependencies
         mockNearbyConnectionsManager = mock()
         mockLocalHttpServer = mock()
-        mockLogFileWriter = mock()
+        mockServiceHardener = mock()
 
         // Create and setup the service instance
         service = BridgeService()
         service.nearbyConnectionsManager = mockNearbyConnectionsManager
         service.localHttpServer = mockLocalHttpServer
-        service.logFileWriter = mockLogFileWriter
+        service.serviceHardener = mockServiceHardener
         service.ioDispatcher = testDispatcher
         service.endpointName = "test-endpoint"
+        Whitebox.setInternalState(service, "logger", mock<AppLogger>())
     }
 
     @Test
@@ -59,6 +62,7 @@ class BridgeServiceTest {
 
 
         // Then
+        verify(mockServiceHardener).updateP2pMessageTime()
         verify(mockLocalHttpServer).dispatchRequest(wrapper)
     }
 }
