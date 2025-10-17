@@ -57,7 +57,7 @@ class CacheAndDisplayTest {
         // 3. Get a reference to the LocalHttpServer created by the service
         localHttpServer = bridgeService.localHttpServer
         // Manually ensure the server is started for the test
-        bridgeService.onStartCommand(Intent(BridgeService.Companion.ACTION_START), 0, 0)
+        localHttpServer.start()
 
 
         // 4. Define the cache directory and create a temporary file to "receive"
@@ -73,7 +73,7 @@ class CacheAndDisplayTest {
 
     @After
     fun tearDown() {
-        bridgeService.onStartCommand(Intent(BridgeService.Companion.ACTION_STOP), 0, 0)
+        localHttpServer.stop()
         webCacheDir.deleteRecursively()
         tempFileToSend.delete()
     }
