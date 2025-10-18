@@ -14,6 +14,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.mutableStateOf
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import info.benjaminhill.localmesh.LocalHttpServer
 import info.benjaminhill.localmesh.mesh.BridgeService
 
@@ -50,6 +53,10 @@ class DisplayActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         Log.i(TAG, "onCreate with intent: $intent")
         enableEdgeToEdge()
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        val controller = WindowCompat.getInsetsController(window, window.decorView)
+        controller.hide(WindowInsetsCompat.Type.statusBars())
+        controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         handleIntent(intent)
 
         if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
@@ -81,7 +88,8 @@ class DisplayActivity : ComponentActivity() {
     }
 
     private fun handleIntent(intent: Intent?) {
-        intent?.extras?.let { bundle ->
+        intent?.extras?.let {
+            bundle ->
             for (key in bundle.keySet()) {
                 Log.i(TAG, "Intent extra: $key = ${bundle.getString(key)}")
             }

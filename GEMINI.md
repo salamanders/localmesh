@@ -83,7 +83,8 @@ The system is composed of three main components:
     * `NearbyConnectionsManager`: Manages the direct peer-to-peer connections using the Google Play
       Services Nearby Connections API (`P2P_CLUSTER` strategy), handling discovery, connections,
       and raw payload transfer. It delegates topology optimization decisions to `TopologyOptimizer`.
-    * `TopologyOptimizer`: A new component responsible for analyzing the network topology, identifying
+    * `TopologyOptimizer`: A new component responsible for analyzing the network topology,
+      identifying
       redundant connections, and instructing `NearbyConnectionsManager` to rewire connections to
       create a more efficient "small-world" network. It also manages timers for gossip and rewiring
       analysis, and maintains cached lists of known nodes and their distances.
@@ -152,18 +153,26 @@ device.
 
 This flow describes how the network self-optimizes its connections.
 
-1.  **Gossip & Data Payloads:** `NearbyConnectionsManager` receives incoming `BYTES` payloads.
-    *   If it's a data message, it extracts the `hopCount` and `sourceNodeId` from the `HttpRequestWrapper` and passes them to `TopologyOptimizer.onDataPayloadReceived()`.
-    *   If it's a gossip message, it extracts the list of peers and passes them to `TopologyOptimizer.onGossipPayloadReceived()`.
-2.  **Topology Analysis:** Periodically (e.g., every 60 seconds), `TopologyOptimizer`'s `analyzeAndPerformRewiring()` method runs.
-    *   It first cleans up any expired entries in its `nodeHopCounts` map (fading out old information about distant nodes).
-    *   It then analyzes its `neighborPeerLists` (from gossip) to identify redundant local connections (e.g., a "triangle" where it's connected to two peers who are also connected to each other).
-    *   It consults its `nodeHopCounts` map to find the most distant node it knows about that is not a direct peer.
-3.  **Rewiring Decision:** If a redundant local connection is found and a more distant node is identified, `TopologyOptimizer` decides to optimize.
-4.  **Rewiring Action:** `TopologyOptimizer` instructs `NearbyConnectionsManager` to:
-    *   `disconnectFromEndpoint()` the redundant peer.
-    *   `requestConnection()` to the more distant node.
-    *   A 60-second cooldown is applied to prevent rapid, destabilizing changes.
+1. **Gossip & Data Payloads:** `NearbyConnectionsManager` receives incoming `BYTES` payloads.
+    * If it's a data message, it extracts the `hopCount` and `sourceNodeId` from the
+      `HttpRequestWrapper` and passes them to `TopologyOptimizer.onDataPayloadReceived()`.
+    * If it's a gossip message, it extracts the list of peers and passes them to
+      `TopologyOptimizer.onGossipPayloadReceived()`.
+2. **Topology Analysis:** Periodically (e.g., every 60 seconds), `TopologyOptimizer`'s
+   `analyzeAndPerformRewiring()` method runs.
+    * It first cleans up any expired entries in its `nodeHopCounts` map (fading out old information
+      about distant nodes).
+    * It then analyzes its `neighborPeerLists` (from gossip) to identify redundant local
+      connections (e.g., a "triangle" where it's connected to two peers who are also connected to
+      each other).
+    * It consults its `nodeHopCounts` map to find the most distant node it knows about that is not a
+      direct peer.
+3. **Rewiring Decision:** If a redundant local connection is found and a more distant node is
+   identified, `TopologyOptimizer` decides to optimize.
+4. **Rewiring Action:** `TopologyOptimizer` instructs `NearbyConnectionsManager` to:
+    * `disconnectFromEndpoint()` the redundant peer.
+    * `requestConnection()` to the more distant node.
+    * A 60-second cooldown is applied to prevent rapid, destabilizing changes.
 
 ## 4. Technology Stack
 
@@ -287,9 +296,6 @@ adb logcat -d DisplayActivity:I WebViewScreen:I *:S
 * Don't be obsequious. The user's ideas aren't "wonderful" or "fantastic" or "brilliant". Don't use
   phrases like "You are absolutely right." or "My apologies" At most say (if it is true) "I can
   confirm that is a better plan."
-* **Not done until proven**: A feature, bug fix, or refactor is never done until we have **positive
-  proof** that it worked. This means extra compile/run/tests. That is **always** worth it. Never
-  say "Final Plan" or "Fixed Code" until you have proof.
 * **Document any reverts**: If you ever do something then revert it, this is valuable information
   and should be written down in this file so future gemini-cli doesn't repeat the same mistake.
 * **Bias towards leaving in Logging statements**: If you add logging to a function, and get the
@@ -313,7 +319,12 @@ mistakes. All strategies must be checked to avoid the following pitfalls:
 * Incorrectly using file modification tools.
 * Misinterpreting logs and incorrectly announcing success.
 * Failing to follow a step-by-step verification process.
-* **KOTLINX.SERIALIZATION BINARY FORMATS**: Be aware that `kotlinx.serialization.json.Json` is a `StringFormat`, not a `BinaryFormat`. Direct `encodeToByteArray` and `decodeFromByteArray` functions are not available on `Json` without an intermediate `String` conversion. Attempting to use them directly will result in compilation errors like "Cannot infer type for type parameter 'T'" or "Too many arguments". If binary serialization is required, consider using a `BinaryFormat` like `ProtoBuf` or explicitly converting to/from `String` for `Json`.
+* **KOTLINX.SERIALIZATION BINARY FORMATS**: Be aware that `kotlinx.serialization.json.Json` is a
+  `StringFormat`, not a `BinaryFormat`. Direct `encodeToByteArray` and `decodeFromByteArray`
+  functions are not available on `Json` without an intermediate `String` conversion. Attempting to
+  use them directly will result in compilation errors like "Cannot infer type for type parameter '
+  T'" or "Too many arguments". If binary serialization is required, consider using a `BinaryFormat`
+  like `ProtoBuf` or explicitly converting to/from `String` for `Json`.
 
 ## 10. Main Application Flows
 

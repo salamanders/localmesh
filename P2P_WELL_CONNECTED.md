@@ -362,3 +362,7 @@ attempt when its connection count is below the target.
 This strategy creates a robust mechanism for healing network partitions by leveraging existing
 topology analysis concepts and introducing a controlled discovery phase, ensuring the mesh network
 can grow and merge dynamically.
+
+## KNOWN ISSUES
+
+1. TODO
