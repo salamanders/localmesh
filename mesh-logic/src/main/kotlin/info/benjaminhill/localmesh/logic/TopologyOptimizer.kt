@@ -1,17 +1,30 @@
-package info.benjaminhill.localmesh.mesh
+package info.benjaminhill.localmesh.logic
 
-import info.benjaminhill.localmesh.util.AppLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
+private const val TARGET_CONNECTIONS = 5
 private const val GOSSIP_INTERVAL_MS = 30_000L
 private const val REWIRING_ANALYSIS_INTERVAL_MS = 60_000L
 private const val REWIRING_COOLDOWN_MS = 60_000L
 private const val NODE_HOP_COUNT_EXPIRY_MS = 120_000L // 2 minutes
+private const val MESSAGE_TYPE_DATA: Byte = 0
+private const val MESSAGE_TYPE_GOSSIP_PEER_LIST: Byte = 1
+
+@Serializable
+private data class NetworkMessage(
+    val type: Byte,
+    val hopCount: Byte,
+    val messageId: String, // UUID as string
+    val payloadContent: String // The HttpRequestWrapper serialized to JSON
+)
 
 /**
  * Orchestrates the self-optimizing mesh network topology.
@@ -33,10 +46,10 @@ private const val NODE_HOP_COUNT_EXPIRY_MS = 120_000L // 2 minutes
  * - **[BridgeService]:** This class is a component managed by [BridgeService] to provide the self-optimizing functionality.
  */
 class TopologyOptimizer(
-    private val connectionsManagerProvider: () -> NearbyConnectionsManager,
-    private val logger: AppLogger,
+    private val connectionManager: ConnectionManager,
+    private val log: (String) -> Unit,
     private val endpointName: String,
-) : TopologyOptimizerCallback {
+) {
 
     private val neighborPeerLists = ConcurrentHashMap<String, List<String>>()
     private val nodeHopCounts =
@@ -46,26 +59,60 @@ class TopologyOptimizer(
     private val scope = CoroutineScope(Dispatchers.IO)
 
     fun start() {
-        logger.log("TopologyOptimizer.start()")
+        log("TopologyOptimizer.start()")
         scope.launch {
+            listenForDiscoveredEndpoints()
+            listenForIncomingPayloads()
             startGossip()
             startRewiringAnalysis()
             cleanupNodeHopCounts()
         }
     }
 
-    override fun onDataPayloadReceived(hopCount: Int, sourceNodeId: String) {
-        nodeHopCounts[sourceNodeId] = Pair(hopCount, System.currentTimeMillis())
+    private fun CoroutineScope.listenForDiscoveredEndpoints() = launch {
+        connectionManager.discoveredEndpoints.collect { endpointId ->
+            if (connectionManager.connectedPeers.value.size < TARGET_CONNECTIONS) {
+                log("Attempting to connect to discovered endpoint $endpointId")
+                connectionManager.connectTo(endpointId)
+            }
+        }
     }
 
-    override fun onGossipPayloadReceived(endpointId: String, theirPeers: List<String>) {
-        neighborPeerLists[endpointId] = theirPeers
+    private fun CoroutineScope.listenForIncomingPayloads() = launch {
+        connectionManager.incomingPayloads.collect { (endpointId, payload) ->
+            val jsonString = payload.toString(Charsets.UTF_8)
+            val networkMessage = Json.decodeFromString<NetworkMessage>(jsonString)
+
+            when (networkMessage.type) {
+                MESSAGE_TYPE_DATA -> {
+                    // This is a bit of a hack, but we need to get the source node ID from the payload.
+                    // In the real app, this would be part of the HttpRequestWrapper.
+                    // For the simulation, we'll just use the endpointId.
+                    nodeHopCounts[endpointId] = Pair(networkMessage.hopCount.toInt(), System.currentTimeMillis())
+                }
+                MESSAGE_TYPE_GOSSIP_PEER_LIST -> {
+                    val theirPeers = networkMessage.payloadContent.split(",").filter { it.isNotBlank() }
+                    neighborPeerLists[endpointId] = theirPeers
+                }
+            }
+        }
     }
 
     private fun CoroutineScope.startGossip() = launch {
         while (true) {
             delay(GOSSIP_INTERVAL_MS)
-            connectionsManagerProvider().broadcastPeerList()
+            val peers = connectionManager.connectedPeers.value.toList()
+            if (peers.isEmpty()) continue
+            val data = peers.joinToString(",").toByteArray(Charsets.UTF_8)
+            val messageId = UUID.randomUUID()
+            val networkMessage = NetworkMessage(
+                type = MESSAGE_TYPE_GOSSIP_PEER_LIST,
+                hopCount = 0,
+                messageId = messageId.toString(),
+                payloadContent = data.toString(Charsets.UTF_8)
+            )
+            val payload = Json.encodeToString(networkMessage).toByteArray(Charsets.UTF_8)
+            connectionManager.sendPayload(peers, payload)
         }
     }
 
@@ -77,16 +124,16 @@ class TopologyOptimizer(
     }
 
     private fun analyzeAndPerformRewiring() {
-        logger.log("Analyzing network for rewiring opportunities.")
+        log("Analyzing network for rewiring opportunities.")
 
         if (System.currentTimeMillis() - lastRewireTimestamp < REWIRING_COOLDOWN_MS) {
-            logger.log("Skipping rewiring analysis due to cooldown.")
+            log("Skipping rewiring analysis due to cooldown.")
             return
         }
 
-        val myPeers = connectionsManagerProvider().connectedPeerIds.toSet()
+        val myPeers = connectionManager.connectedPeers.value
         if (myPeers.size < 2) {
-            logger.log("Not enough peers to analyze for rewiring.")
+            log("Not enough peers to analyze for rewiring.")
             return
         }
 
@@ -97,7 +144,7 @@ class TopologyOptimizer(
             for (peerB in myPeers) {
                 if (peerA != peerB && peersOfPeerA.contains(peerB)) {
                     redundantPeer = peerB
-                    logger.log("Found redundant connection: We are connected to $peerA and $peerB, and they are connected to each other.")
+                    log("Found redundant connection: We are connected to $peerA and $peerB, and they are connected to each other.")
                     break
                 }
             }
@@ -105,7 +152,7 @@ class TopologyOptimizer(
         }
 
         if (redundantPeer == null) {
-            logger.log("No redundant local connections found.")
+            log("No redundant local connections found.")
             return
         }
 
@@ -122,13 +169,13 @@ class TopologyOptimizer(
         val mostDistantNodeId = mostDistantNodeEntry?.key
 
         if (mostDistantNodeId == null) {
-            logger.log("No distant nodes found to rewire to.")
+            log("No distant nodes found to rewire to.")
             return
         }
 
-        logger.log("PERFORMING REWIRING: Dropping redundant peer $redundantPeer and connecting to distant node $mostDistantNodeId (hop count: ${mostDistantNodeEntry.value.first})")
-        connectionsManagerProvider().disconnectFromEndpoint(redundantPeer)
-        connectionsManagerProvider().requestConnection(mostDistantNodeId)
+        log("PERFORMING REWIRING: Dropping redundant peer $redundantPeer and connecting to distant node $mostDistantNodeId (hop count: ${mostDistantNodeEntry.value.first})")
+        connectionManager.disconnectFrom(redundantPeer)
+        connectionManager.connectTo(mostDistantNodeId)
         lastRewireTimestamp = System.currentTimeMillis()
     }
 
@@ -139,12 +186,12 @@ class TopologyOptimizer(
             nodeHopCounts.entries.removeIf { (_, pair) ->
                 now - pair.second > NODE_HOP_COUNT_EXPIRY_MS
             }
-            logger.log("Cleaned up expired node hop counts. Current size: ${nodeHopCounts.size}")
+            log("Cleaned up expired node hop counts. Current size: ${nodeHopCounts.size}")
         }
     }
 
     fun stop() {
-        logger.log("TopologyOptimizer.stop()")
+        log("TopologyOptimizer.stop()")
         scope.cancel()
     }
 }
