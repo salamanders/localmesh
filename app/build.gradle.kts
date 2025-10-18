@@ -67,6 +67,7 @@ tasks.withType<Test> {
 }
 
 dependencies {
+    implementation(project(":mesh-logic"))
     androidTestImplementation(platform(libs.androidx.compose.bom))
     debugImplementation(libs.androidx.compose.ui.tooling)
     implementation(libs.androidx.activity.compose)

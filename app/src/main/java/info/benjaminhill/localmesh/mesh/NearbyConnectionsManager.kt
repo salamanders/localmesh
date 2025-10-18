@@ -16,10 +16,15 @@ import com.google.android.gms.nearby.connection.Payload
 import com.google.android.gms.nearby.connection.PayloadCallback
 import com.google.android.gms.nearby.connection.PayloadTransferUpdate
 import com.google.android.gms.nearby.connection.Strategy
+import info.benjaminhill.localmesh.logic.ConnectionManager
 import info.benjaminhill.localmesh.util.AppLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -73,19 +78,22 @@ class NearbyConnectionsManager(
     private val logger: AppLogger,
     private val payloadReceivedCallback: (endpointId: String, payload: Payload) -> Unit,
     private val topologyOptimizerCallback: TopologyOptimizerCallback
-) {
+) : ConnectionManager {
+
+    override val connectedPeers = MutableStateFlow(emptySet<String>())
+    override val incomingPayloads = MutableSharedFlow<Pair<String, ByteArray>>()
+    override val discoveredEndpoints = MutableSharedFlow<String>()
 
     private val connectionsClient: ConnectionsClient by lazy {
         Nearby.getConnectionsClient(context)
     }
 
     private val serviceId = "info.benjaminhill.localmesh.v1"
-    private val connectedEndpoints = ConcurrentLinkedQueue<String>()
     private val retryCounts = mutableMapOf<String, Int>()
     private val seenMessageIds = ConcurrentHashMap<UUID, Long>()
 
 
-    fun start() {
+    override fun start() {
         logger.log("NearbyConnectionsManager.start()")
         CoroutineScope(Dispatchers.IO).launch {
             startAdvertising()
@@ -95,8 +103,8 @@ class NearbyConnectionsManager(
 
 
     fun broadcastPeerList() {
-        if (connectedEndpoints.isEmpty()) return
-        val peers = connectedEndpoints.toList()
+        if (connectedPeers.value.isEmpty()) return
+        val peers = connectedPeers.value.toList()
         val data = peers.joinToString(",").toByteArray(Charsets.UTF_8)
         val messageId = UUID.randomUUID()
         val payload = createForwardablePayload(MESSAGE_TYPE_GOSSIP_PEER_LIST, 0, messageId, data)
@@ -105,10 +113,10 @@ class NearbyConnectionsManager(
     }
 
 
-    fun stop() {
+    override fun stop() {
         logger.log("NearbyConnectionsManager.stop()")
         connectionsClient.stopAllEndpoints()
-        connectedEndpoints.clear()
+        connectedPeers.value = emptySet()
         retryCounts.clear()
         seenMessageIds.clear()
     }
@@ -128,8 +136,8 @@ class NearbyConnectionsManager(
     fun broadcastBytes(data: ByteArray) {
         val messageId = UUID.randomUUID()
         val payload = createForwardablePayload(MESSAGE_TYPE_DATA, 0, messageId, data)
-        logger.log("Broadcasting original data message $messageId to ${connectedEndpoints.size} peers.")
-        sendPayload(connectedEndpoints.toList(), payload)
+        logger.log("Broadcasting original data message $messageId to ${connectedPeers.value.size} peers.")
+        sendPayload(connectedPeers.value.toList(), payload)
     }
 
     /**
@@ -168,11 +176,17 @@ class NearbyConnectionsManager(
         return Json.decodeFromString<NetworkMessage>(jsonString)
     }
 
-    val connectedPeerCount: Int
-        get() = connectedEndpoints.size
+    override fun connectTo(endpointId: String) {
+        requestConnection(endpointId)
+    }
 
-    val connectedPeerIds: List<String>
-        get() = connectedEndpoints.toList()
+    override fun disconnectFrom(endpointId: String) {
+        disconnectFromEndpoint(endpointId)
+    }
+
+    override fun sendPayload(endpointIds: List<String>, payload: ByteArray) {
+        sendPayload(endpointIds, Payload.fromBytes(payload))
+    }
 
     private suspend fun startAdvertising() = logger.runCatchingWithLogging {
         withContext(Dispatchers.IO) {
@@ -250,13 +264,12 @@ class NearbyConnectionsManager(
                 networkMessage.hopCount.toInt(),
                 wrapper.sourceNodeId
             )
-            payloadReceivedCallback(
-                endpointId,
-                Payload.fromBytes(networkMessage.payloadContent.toByteArray(Charsets.UTF_8))
-            )
+            CoroutineScope(Dispatchers.IO).launch {
+                incomingPayloads.emit(endpointId to networkMessage.payloadContent.toByteArray(Charsets.UTF_8))
+            }
 
             // 1. Forward to all other peers
-            val otherPeers = connectedEndpoints.filter { it != endpointId }
+            val otherPeers = connectedPeers.value.filter { it != endpointId }
             if (otherPeers.isNotEmpty()) {
                 val nextHopCount = (networkMessage.hopCount + 1).toByte()
                 val forwardedPayload = createForwardablePayload(
@@ -324,9 +337,8 @@ class NearbyConnectionsManager(
             override fun onConnectionResult(endpointId: String, result: ConnectionResolution) {
                 if (result.status.isSuccess) {
                     logger.log("Connected to $endpointId")
-                    connectedEndpoints.add(endpointId)
+                    connectedPeers.value += endpointId
                     retryCounts.remove(endpointId) // Clear on success
-                    // peerCountUpdateCallback(connectedEndpoints.size)
                 } else {
                     logger.log("Connection to $endpointId failed: ${result.status.statusCode}")
                     scheduleRetry(endpointId, "connection result") {
@@ -337,8 +349,7 @@ class NearbyConnectionsManager(
 
             override fun onDisconnected(endpointId: String) {
                 logger.log("onDisconnected: $endpointId")
-                connectedEndpoints.remove(endpointId)
-                // peerCountUpdateCallback(connectedEndpoints.size)
+                connectedPeers.value -= endpointId
             }
         }
 
@@ -348,11 +359,8 @@ class NearbyConnectionsManager(
             discoveredEndpointInfo: DiscoveredEndpointInfo
         ) {
             logger.log("onEndpointFound: ${discoveredEndpointInfo.endpointName} (id:$endpointId)")
-            if (connectedEndpoints.size < TARGET_CONNECTIONS) {
-                logger.log("Attempting to connect to $endpointId (current connections: ${connectedEndpoints.size})")
-                requestConnection(endpointId)
-            } else {
-                logger.log("Skipping connection to $endpointId (already at target connections: ${connectedEndpoints.size})")
+            CoroutineScope(Dispatchers.IO).launch {
+                discoveredEndpoints.emit(endpointId)
             }
         }
 
