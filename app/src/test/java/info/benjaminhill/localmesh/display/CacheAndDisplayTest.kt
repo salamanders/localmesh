@@ -5,8 +5,8 @@ import android.content.Intent
 import androidx.test.core.app.ApplicationProvider
 import com.google.android.gms.nearby.connection.Payload
 import info.benjaminhill.localmesh.LocalHttpServer
+import info.benjaminhill.localmesh.logic.HttpRequestWrapper
 import info.benjaminhill.localmesh.mesh.BridgeService
-import info.benjaminhill.localmesh.mesh.HttpRequestWrapper
 import info.benjaminhill.localmesh.mesh.NearbyConnectionsManager
 import info.benjaminhill.localmesh.util.AssetManager
 import io.ktor.client.HttpClient
@@ -14,6 +14,7 @@ import io.ktor.client.engine.cio.CIO
 import io.ktor.client.request.get
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert
@@ -98,7 +99,10 @@ class CacheAndDisplayTest {
 
     @After
     fun tearDown() {
-        localHttpServer.stop()
+        runBlocking {
+            localHttpServer.stop()
+            delay(500) // Give the OS time to release the port
+        }
         webCacheDir.deleteRecursively()
         tempFileToSend.delete()
     }

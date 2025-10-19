@@ -8,12 +8,17 @@ import kotlinx.serialization.Serializable
  */
 @Serializable
 data class NetworkMessage(
-    /** Type of message, used to determine how to parse the payloadContent. */
-    val type: Byte,
     /** The number of hops this message has taken. */
     val hopCount: Byte,
     /** A unique identifier for this message to prevent broadcast loops. */
     val messageId: String, // UUID as string
-    /** The actual content of the message (e.g., a serialized HttpRequestWrapper or a peer list). */
-    val payloadContent: String
+    /** The HTTP request payload, if this is an HTTP message. */
+    val httpRequest: HttpRequestWrapper? = null,
+    /** The gossip payload, if this is a gossip message. */
+    val gossip: Gossip? = null
+)
+
+@Serializable
+data class Gossip(
+    val peerList: List<String>
 )

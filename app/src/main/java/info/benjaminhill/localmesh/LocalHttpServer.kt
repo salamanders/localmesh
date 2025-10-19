@@ -2,8 +2,8 @@ package info.benjaminhill.localmesh
 
 import android.content.Intent
 import info.benjaminhill.localmesh.display.DisplayActivity
+import info.benjaminhill.localmesh.logic.HttpRequestWrapper
 import info.benjaminhill.localmesh.mesh.BridgeService
-import info.benjaminhill.localmesh.mesh.HttpRequestWrapper
 import info.benjaminhill.localmesh.util.AppLogger
 import info.benjaminhill.localmesh.util.AssetManager
 import io.ktor.client.HttpClient
@@ -118,7 +118,7 @@ class LocalHttpServer(
                     sourceNodeId = service.endpointName
                 )
                 logger.log("Broadcasting to peers: $wrapper")
-                service.broadcast(wrapper.toJson())
+                service.broadcast(wrapper)
 
                 // Stop the pipeline for this request by responding immediately.
                 // This prevents the controller from executing the command on the originating device,
