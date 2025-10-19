@@ -10,7 +10,7 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
 // The number of connections to proactively seek.
-private const val TARGET_CONNECTIONS = 5
+private const val TARGET_CONNECTIONS = 4
 // How often to share peer lists with neighbors.
 private const val GOSSIP_INTERVAL_MS = 30_000L
 // How often to check for opportunities to improve the network topology.
