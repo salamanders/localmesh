@@ -15,6 +15,7 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import org.junit.After
@@ -78,14 +79,9 @@ class LocalHttpServerTest {
         doReturn(mockContext).`when`(mockBridgeService).applicationContext
         server = LocalHttpServer(mockBridgeService, mockLogger)
         server.start()
-        doReturn(3).`when`(mockNearbyConnectionsManager).connectedPeerCount
-        doReturn(
-            listOf(
-                "peer1",
-                "peer2",
-                "peer3"
-            )
-        ).`when`(mockNearbyConnectionsManager).connectedPeerIds
+        val mockPeers = setOf("peer1", "peer2", "peer3")
+        val mockPeerFlow = MutableStateFlow(mockPeers)
+        doReturn(mockPeerFlow).`when`(mockNearbyConnectionsManager).connectedPeers
 
         // When
         val client = HttpClient(CIO)
@@ -97,9 +93,7 @@ class LocalHttpServerTest {
         assertEquals(HttpStatusCode.OK, response.status)
         assertEquals("test-endpoint", statusResponse.id)
         assertEquals(3, statusResponse.peerCount)
-        assertEquals(listOf("peer1", "peer2", "peer3"), statusResponse.peerIds)
-
-        client.close()
+        assertEquals(listOf("peer1", "peer2", "peer3"), statusResponse.peerIds.sorted())
     }
 
     @Test

@@ -119,12 +119,12 @@ class ServiceHardener(
         val uptime = now - service.serviceStartTime
         val timeSinceLastMessage = now - lastP2pMessageTime.get()
 
-        if (uptime > FIVE_MINUTES_MS && service.nearbyConnectionsManager.connectedPeerCount == 0) {
+        if (uptime > FIVE_MINUTES_MS && service.nearbyConnectionsManager.connectedPeers.value.isEmpty()) {
             logger.e("P2P Health Fail: No peers connected after ${uptime / 1000}s.")
             return false
         }
 
-        if (service.nearbyConnectionsManager.connectedPeerCount > 0 && timeSinceLastMessage > FIVE_MINUTES_MS) {
+        if (service.nearbyConnectionsManager.connectedPeers.value.isNotEmpty() && timeSinceLastMessage > FIVE_MINUTES_MS) {
             logger.e("P2P Health Fail: No messages for ${timeSinceLastMessage / 1000}s.")
             return false
         }

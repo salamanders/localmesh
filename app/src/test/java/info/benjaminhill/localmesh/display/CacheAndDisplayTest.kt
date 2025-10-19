@@ -124,7 +124,7 @@ class CacheAndDisplayTest {
         val bytesPayload = Payload.fromBytes(wrapper.toJson().toByteArray(Charset.defaultCharset()))
 
         // 3. Call the handlers on the *real* BridgeService to simulate the two payloads arriving.
-        bridgeService.handleBytesPayload(bytesPayload) // Primes the service
+        bridgeService.handleIncomingData(bytesPayload.asBytes()!!) // Primes the service
         bridgeService.handleStreamPayload(streamPayload) // Delivers the file data
 
         // --- Verify the file is cached and can be displayed ---

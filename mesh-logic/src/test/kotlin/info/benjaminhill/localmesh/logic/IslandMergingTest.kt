@@ -62,7 +62,7 @@ class IslandMergingTest {
         val nodeB = island2.first().first
 
         coroutineScope.launch {
-             nodeA.discoveredEndpoints.emit(nodeB.id)
+            nodeA.discoveredEndpoints.emit(nodeB.id)
         }
 
         // Wait for the optimizer to connect them and for the networks to merge

@@ -63,7 +63,7 @@ class BridgeServiceTest {
         val payload = Payload.fromBytes(jsonString.toByteArray(Charsets.UTF_8))
 
         // When
-        service.handleBytesPayload(payload)
+        service.handleIncomingData(payload.asBytes()!!)
         // Advance the dispatcher to execute the coroutine
         testDispatcher.scheduler.advanceUntilIdle()
 

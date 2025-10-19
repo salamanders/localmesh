@@ -23,21 +23,17 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.math.pow
 
 private const val TARGET_CONNECTIONS = 3
 private const val MAX_CONNECTIONS = 4
 
-private const val MESSAGE_TYPE_DATA: Byte = 0
+const val MESSAGE_TYPE_DATA: Byte = 0
 private const val MESSAGE_TYPE_GOSSIP_PEER_LIST: Byte = 1
 
 @Serializable
@@ -50,34 +46,31 @@ private data class NetworkMessage(
 
 
 /**
- * Manages all peer-to-peer network interactions using the Google Nearby Connections API.
+ * The Android-specific implementation of the [ConnectionManager] interface.
  *
  * ## What it does
- * - Handles device discovery, advertising, and connection management.
- * - Establishes a many-to-many mesh network using the `P2P_CLUSTER` strategy.
- * - Sends and receives `Payload` objects (both `BYTES` and `STREAM`) to and from all connected peers.
- * - Manages connection retries with exponential backoff.
+ * - Acts as the "hands" of the network, wrapping the Google Play Services Nearby Connections API.
+ * - Translates commands from the `TopologyOptimizer` (e.g., `connectTo`, `disconnectFrom`) into
+ *   actual hardware operations (Wi-Fi/Bluetooth).
+ * - Manages the low-level details of advertising, discovery, and connection lifecycle.
+ * - Receives all raw `Payload` objects from peers. It immediately emits `BYTES` payloads to the
+ *   `incomingPayloads` flow for consumption by other services (like `TopologyOptimizer` and
+ *   `BridgeService`) and uses a callback for handling `STREAM` payloads (for file transfers).
  *
  * ## What it doesn't do
- * - It does not interpret the content of the payloads it sends or receives. It is a transport layer,
- *   passing raw payloads up to the `BridgeService`.
- * - It is not aware of the HTTP server or the application's specific API endpoints.
+ * - It has no knowledge of the mesh topology or optimization strategy. It is a stateless transport layer.
+ * - It does not parse the content of `BYTES` payloads; it just passes them on.
  *
  * ## Comparison to other classes
+ * - **[TopologyOptimizer]:** This class is the "hands", while `TopologyOptimizer` is the "brains".
  * - **[BridgeService]:** This class is the workhorse for P2P communication, while `BridgeService` acts
- *   as the orchestrator, connecting this manager to the `LocalHttpServer`.
+ *   as the central orchestrator.
  */
-interface TopologyOptimizerCallback {
-    fun onDataPayloadReceived(hopCount: Int, sourceNodeId: String)
-    fun onGossipPayloadReceived(endpointId: String, theirPeers: List<String>)
-}
-
 class NearbyConnectionsManager(
     private val context: Context,
     private val endpointName: String,
     private val logger: AppLogger,
-    private val payloadReceivedCallback: (endpointId: String, payload: Payload) -> Unit,
-    private val topologyOptimizerCallback: TopologyOptimizerCallback
+    private val payloadReceivedCallback: (endpointId: String, payload: Payload) -> Unit
 ) : ConnectionManager {
 
     override val connectedPeers = MutableStateFlow(emptySet<String>())
@@ -101,18 +94,6 @@ class NearbyConnectionsManager(
         }
     }
 
-
-    fun broadcastPeerList() {
-        if (connectedPeers.value.isEmpty()) return
-        val peers = connectedPeers.value.toList()
-        val data = peers.joinToString(",").toByteArray(Charsets.UTF_8)
-        val messageId = UUID.randomUUID()
-        val payload = createForwardablePayload(MESSAGE_TYPE_GOSSIP_PEER_LIST, 0, messageId, data)
-        logger.log("Gossiping peer list to ${peers.size} peers.")
-        sendPayload(peers, payload)
-    }
-
-
     override fun stop() {
         logger.log("NearbyConnectionsManager.stop()")
         connectionsClient.stopAllEndpoints()
@@ -129,52 +110,6 @@ class NearbyConnectionsManager(
                     logger.e("Failed to send payload ${payload.id}", e)
                 }
         }
-
-    /**
-     * Broadcasts a byte array to all connected endpoints, wrapping it in a forwardable message structure.
-     */
-    fun broadcastBytes(data: ByteArray) {
-        val messageId = UUID.randomUUID()
-        val payload = createForwardablePayload(MESSAGE_TYPE_DATA, 0, messageId, data)
-        logger.log("Broadcasting original data message $messageId to ${connectedPeers.value.size} peers.")
-        sendPayload(connectedPeers.value.toList(), payload)
-    }
-
-    /**
-     * Forwards a payload to a list of endpoints.
-     * This is used to propagate messages through the mesh.
-     */
-    private fun forwardPayload(endpointIds: List<String>, payload: Payload) {
-        logger.log("Forwarding message to ${endpointIds.size} peers.")
-        sendPayload(endpointIds, payload)
-    }
-
-    /**
-     * Creates a payload by serializing a `NetworkMessage` to JSON and then to `ByteArray`.
-     */
-    private fun createForwardablePayload(
-        type: Byte,
-        hopCount: Byte,
-        messageId: UUID,
-        data: ByteArray
-    ): Payload {
-        val networkMessage = NetworkMessage(
-            type = type,
-            hopCount = hopCount,
-            messageId = messageId.toString(),
-            payloadContent = data.toString(Charsets.UTF_8)
-        )
-        val jsonString = Json.encodeToString(networkMessage)
-        return Payload.fromBytes(jsonString.toByteArray(Charsets.UTF_8))
-    }
-
-    /**
-     * Extracts the `NetworkMessage` from a received `Payload` by deserializing from JSON.
-     */
-    private fun unpackForwardablePayload(payload: Payload): NetworkMessage {
-        val jsonString = payload.asBytes()!!.toString(Charsets.UTF_8)
-        return Json.decodeFromString<NetworkMessage>(jsonString)
-    }
 
     override fun connectTo(endpointId: String) {
         requestConnection(endpointId)
@@ -224,74 +159,24 @@ class NearbyConnectionsManager(
 
     private val payloadCallback = object : PayloadCallback() {
         override fun onPayloadReceived(endpointId: String, payload: Payload) {
-            logger.log("onPayloadReceived: Received payload from $endpointId, type: ${payload.type}, size: ${payload.asBytes()?.size}")
+            logger.log("onPayloadReceived: from $endpointId, type: ${payload.type}")
             logger.runCatchingWithLogging {
-                if (payload.type != Payload.Type.BYTES) {
-                    logger.log("Received a non-BYTES payload from $endpointId. Processing directly.")
-                    payloadReceivedCallback(endpointId, payload)
-                    return@runCatchingWithLogging
-                }
-                val bytes = payload.asBytes()
-                if (bytes == null || bytes.isEmpty()) {
-                    logger.log("Received an empty BYTES payload from $endpointId. Ignoring.")
-                    payloadReceivedCallback(endpointId, payload)
-                    return@runCatchingWithLogging
-                }
-                val jsonString = bytes.toString(Charsets.UTF_8)
-                logger.log("Received BYTES payload content from $endpointId: $jsonString")
+                when (payload.type) {
+                    Payload.Type.BYTES -> {
+                        val bytes = payload.asBytes()!!
+                        logger.log("Emitting ${bytes.size} bytes from $endpointId to incomingPayloads flow.")
+                        CoroutineScope(Dispatchers.IO).launch {
+                            incomingPayloads.emit(endpointId to bytes)
+                        }
+                    }
 
-                val networkMessage = unpackForwardablePayload(payload)
-
-                if (seenMessageIds.containsKey(UUID.fromString(networkMessage.messageId))) {
-                    logger.log("Ignoring duplicate message ${networkMessage.messageId} from $endpointId.")
-                    return@runCatchingWithLogging
-                }
-                seenMessageIds[UUID.fromString(networkMessage.messageId)] =
-                    System.currentTimeMillis()
-
-                when (networkMessage.type) {
-                    MESSAGE_TYPE_DATA -> handleDataPayload(endpointId, networkMessage)
-                    MESSAGE_TYPE_GOSSIP_PEER_LIST -> handleGossipPayload(endpointId, networkMessage)
-                    else -> logger.log("Received unknown message type: ${networkMessage.type}")
+                    else -> {
+                        logger.log("Passing non-BYTES payload from $endpointId to callback.")
+                        payloadReceivedCallback(endpointId, payload)
+                    }
                 }
             }
         }
-
-        private fun handleDataPayload(endpointId: String, networkMessage: NetworkMessage) {
-            logger.log("Received new data message ${networkMessage.messageId} from $endpointId with hopCount ${networkMessage.hopCount}.")
-            val wrapper = HttpRequestWrapper.fromJson(networkMessage.payloadContent)
-            topologyOptimizerCallback.onDataPayloadReceived(
-                networkMessage.hopCount.toInt(),
-                wrapper.sourceNodeId
-            )
-            CoroutineScope(Dispatchers.IO).launch {
-                incomingPayloads.emit(endpointId to networkMessage.payloadContent.toByteArray(Charsets.UTF_8))
-            }
-
-            // 1. Forward to all other peers
-            val otherPeers = connectedPeers.value.filter { it != endpointId }
-            if (otherPeers.isNotEmpty()) {
-                val nextHopCount = (networkMessage.hopCount + 1).toByte()
-                val forwardedPayload = createForwardablePayload(
-                    networkMessage.type,
-                    nextHopCount,
-                    UUID.fromString(networkMessage.messageId),
-                    networkMessage.payloadContent.toByteArray(Charsets.UTF_8)
-                )
-                forwardPayload(otherPeers, forwardedPayload)
-            }
-
-            // 2. Process the data locally by passing it up to the service
-        }
-
-        private fun handleGossipPayload(endpointId: String, networkMessage: NetworkMessage) {
-            val theirPeers =
-                networkMessage.payloadContent.split(",").filter { it.isNotBlank() }
-            logger.log("Received gossip from $endpointId with ${theirPeers.size} peers.")
-            topologyOptimizerCallback.onGossipPayloadReceived(endpointId, theirPeers)
-            // Do not forward gossip messages
-        }
-
 
         override fun onPayloadTransferUpdate(endpointId: String, update: PayloadTransferUpdate) {
             logger.runCatchingWithLogging {
@@ -321,14 +206,14 @@ class NearbyConnectionsManager(
             override fun onConnectionInitiated(endpointId: String, connectionInfo: ConnectionInfo) {
                 logger.runCatchingWithLogging {
                     logger.log("onConnectionInitiated from ${connectionInfo.endpointName} (id:$endpointId)")
-                    if (connectedEndpoints.size < MAX_CONNECTIONS) {
-                        logger.log("Accepting connection from $endpointId (current connections: ${connectedEndpoints.size})")
+                    if (connectedPeers.value.size < MAX_CONNECTIONS) {
+                        logger.log("Accepting connection from $endpointId (current connections: ${connectedPeers.value.size})")
                         connectionsClient.acceptConnection(endpointId, payloadCallback)
                             .addOnFailureListener { e ->
                                 logger.e("Failed to accept connection from $endpointId", e)
                             }
                     } else {
-                        logger.log("Rejecting connection from $endpointId (already at max connections: ${connectedEndpoints.size})")
+                        logger.log("Rejecting connection from $endpointId (already at max connections: ${connectedPeers.value.size})")
                         connectionsClient.rejectConnection(endpointId)
                     }
                 }

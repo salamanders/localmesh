@@ -1,10 +1,8 @@
 # LocalMesh: Technical Deep Dive
 
 **This document is the central technical reference for LocalMesh developers.**
-
 It provides a comprehensive overview of the project's architecture, data flows, and development
 practices. For a user-focused summary, please see the main [README.md](README.md).
-
 ---
 
 ## Core Mandate: The "Prove-It" Workflow
@@ -15,9 +13,7 @@ mandatory for all tasks.
 1. **State the Hypothesis:** Before attempting any fix, explicitly state the hypothesis for the root
    cause of the problem. (e.g., "The build is failing because of an incorrect context in the
    Composable function.")
-
 2. **Execute a Single, Atomic Change:** Make the smallest possible change to address the hypothesis.
-
 3. **Immediately Verify with Proof:** After every single action, run a command to get positive proof
    of the outcome.
     * After a code change (`write_file`, `replace`): Immediately run the build (
@@ -26,12 +22,10 @@ mandatory for all tasks.
       specific `logcat` filter to find affirmative proof that the action succeeded.
     * **Absence of an error is not proof of success.** Only a log message or status confirming the
       intended outcome is proof.
-
 4. **Announce Only After Proof:** Never state a task is "done," "fixed," or "complete" until you
    have the output from the verification command.
     * **Incorrect:** "I have fixed the build."
     * **Correct:** "I have applied the change. I will now run the build command to verify."
-
 5. **Trust User Observation Over Logs:** If your log data or assumptions conflict with a direct
    observation from the user, the user's observation is the ground truth. Halt immediately, state
    that your understanding was wrong, and re-evaluate from the user's observation.
@@ -56,7 +50,6 @@ mandatory for all tasks.
 LocalMesh is a native Android application that functions as a **"P2P Web Bridge."** It enables a
 standard mobile web browser to communicate with other nearby devices over a peer-to-peer mesh
 network, without requiring an internet or cellular connection.
-
 The core architectural principle is a **Pass-Through Web Server**. All actions, whether initiated
 locally or by a peer, are treated as standard HTTP requests to a local Ktor web server. The P2P
 network layer is simply a transport mechanism for forwarding these HTTP requests between devices,
@@ -64,32 +57,38 @@ making the Ktor routing block the single source of truth for the application's e
 
 ## 2. System Architecture
 
-The system is composed of three main components:
+The system is composed of four main components:
 
-* **Web Frontend:** A user-facing single-page application running in a `WebView` (or standard mobile
-  browser). It interacts with the `LocalHttpServer` for all actions.
+* **Web Frontend:** A user-facing single-page application running in a `WebView`. It
+  interacts with the `LocalHttpServer` for all actions.
 
-* **LocalMesh Android App (Middleware):** The native Android application that runs as a background
-  service. It consists of:
-    * `MainActivity`: A simple entry point with a single button to start the service and launch the
-      `DisplayActivity`.
-    * `DisplayActivity`: An Activity that hosts the full-screen `WebView` for the main UI.
-    * `BridgeService`: A foreground `Service` that orchestrates the networking components. Its
-      primary role is to forward messages between the `NearbyConnectionsManager` and the
-      `LocalHttpServer`.
-    * `LocalHttpServer`: A lightweight Ktor-based HTTP server on `http://localhost:8099`. It
-      contains all application logic in its routing block and uses a custom interceptor to
-      automatically broadcast relevant local requests to all peers.
-    * `NearbyConnectionsManager`: Manages the direct peer-to-peer connections using the Google Play
-      Services Nearby Connections API (`P2P_CLUSTER` strategy), handling discovery, connections,
-      and raw payload transfer. It delegates topology optimization decisions to `TopologyOptimizer`.
-    * `TopologyOptimizer`: A new component responsible for analyzing the network topology,
-      identifying
-      redundant connections, and instructing `NearbyConnectionsManager` to rewire connections to
-      create a more efficient "small-world" network. It also manages timers for gossip and rewiring
-      analysis, and maintains cached lists of known nodes and their distances.
-    * `ServiceHardener`: A watchdog that monitors the health of the application and restarts it if
-      it becomes unresponsive.
+* **`mesh-logic` Module (Shared Kotlin Library):** A platform-agnostic pure Kotlin module that
+  contains the core networking intelligence.
+    * `ConnectionManager`: A crucial interface that defines a platform-agnostic API for managing
+      peer-to-peer connections (e.g., `connectTo`, `disconnectFrom`, `sendPayload`) and exposes
+      Kotlin Flows for events like `discoveredEndpoints` and `incomingPayloads`.
+    * `TopologyOptimizer`: The "brains" of the network. It consumes a `ConnectionManager`
+      implementation and contains all the logic for analyzing network health, gossiping with
+      peers, and making high-level decisions to optimize the network topology by instructing the
+      `ConnectionManager` to rewire connections.
+    * `SimulatedConnectionManager`: An in-memory implementation of the `ConnectionManager`
+      interface, used for running unit and integration tests of the `TopologyOptimizer` on a
+      standard JVM without needing Android devices.
+
+* **LocalMesh Android App (Middleware):** The native Android application that provides the
+  Android-specific implementations and UI.
+    * `BridgeService`: A foreground `Service` that orchestrates all the components. It
+      initializes the `TopologyOptimizer` and provides it with the `NearbyConnectionsManager`.
+    * `NearbyConnectionsManager`: The Android-specific implementation of the `ConnectionManager`
+      interface. It acts as the "hands" of the network, wrapping the Google Play Services
+      Nearby Connections API and translating the `TopologyOptimizer`'s commands into actual
+      hardware operations (Wi-Fi/Bluetooth). It emits all incoming data to a `SharedFlow` for
+      other components to consume.
+    * `LocalHttpServer`: A Ktor-based HTTP server that serves the web UI and provides an API for
+      the frontend to interact with the system.
+    * `MainActivity` & `DisplayActivity`: The Android activities for launching the service and
+      hosting the `WebView`.
+    * `ServiceHardener`: A watchdog that monitors the health of the application.
 
 * **Peers:** Other Android devices on the same local network running the LocalMesh app.
 
@@ -103,17 +102,18 @@ on all peers.
 1. A local web page sends an HTTP request to `http://localhost:8099` (e.g., `POST /chat`).
 2. The `p2pBroadcastInterceptor` in `LocalHttpServer` intercepts the request and sees it has no
    `sourceNodeId` query parameter, marking it as a local-origin request.
-3. The interceptor serializes the request into an `HttpRequestWrapper` object, adds its own
-   `sourceNodeId`, and calls `service.broadcast()`.
-4. The `BridgeService` passes the serialized string to the `NearbyConnectionsManager`, which sends
-   it to all connected peers as a `BYTES` payload.
-5. On a remote peer, `NearbyConnectionsManager` receives the `BYTES` payload and passes it to its
-   `BridgeService`.
-6. The peer's `BridgeService` deserializes the `HttpRequestWrapper` and calls
-   `localHttpServer.dispatchRequest()`.
-7. `dispatchRequest` uses an `HttpClient` to make a synthetic request to its *own* local server (
+3. The interceptor serializes the request into an `HttpRequestWrapper` object.
+4. The `BridgeService.broadcast()` method wraps the `HttpRequestWrapper` in a standard
+   `NetworkMessage` (which includes a unique ID and hop count) and serializes it.
+5. The `BridgeService` calls `nearbyConnectionsManager.sendPayload()` to send the serialized
+   `NetworkMessage` to all connected peers.
+6. On a remote peer, `NearbyConnectionsManager` receives the `BYTES` payload and emits it onto the
+   `incomingPayloads` `SharedFlow`.
+7. The remote peer's `BridgeService` collects this flow, deserializes the `NetworkMessage` and
+   the `HttpRequestWrapper` inside it, and calls `localHttpServer.dispatchRequest()`.
+8. `dispatchRequest` uses an `HttpClient` to make a synthetic request to its *own* local server (
    e.g., `http://localhost:8099/chat?sourceNodeId=...`), now including the `sourceNodeId`.
-8. The `p2pBroadcastInterceptor` on the peer sees the `sourceNodeId` and ignores the request,
+9. The `p2pBroadcastInterceptor` on the peer sees the `sourceNodeId` and ignores the request,
    preventing a broadcast loop. The request is then handled by the appropriate Ktor route.
 
 ### 3.2. Detailed Flow: Remote Display
@@ -124,10 +124,11 @@ device.
 1. **UI Interaction:** User taps a folder (e.g., "eye") in the web UI.
 2. **Local Request:** The UI sends a `GET /display?path=eye` request to the local server.
 3. **Intercept & Broadcast:** The `p2pBroadcastInterceptor` identifies `/display` as a
-   broadcast-only path, creates an `HttpRequestWrapper`, and broadcasts it to all peers.
+   broadcast-only path, creates an `HttpRequestWrapper`, and calls `service.broadcast()`.
 4. **Stop Local Execution:** The interceptor immediately stops the request pipeline on the
    originating device. This is key: the display command should only execute on remote peers.
-5. **Peer Reception:** A peer device receives the `HttpRequestWrapper`.
+5. **Peer Reception:** A peer device receives the `NetworkMessage` via its
+   `NearbyConnectionsManager` and the `BridgeService` collects it from the flow.
 6. **Dispatch to Local Server:** The peer's `BridgeService` dispatches the wrapper to its own
    `LocalHttpServer` as a synthetic request.
 7. **Execute on Peer:** The peer's server processes the `GET /display` request. The route handler
@@ -140,39 +141,45 @@ device.
 3. **Save & Prepare:** The local server saves the file to a temp location and calls
    `BridgeService.sendFile()`.
 4. **Broadcast Command & Stream:** The `BridgeService` does two things:
-    * Broadcasts an `HttpRequestWrapper` for `POST /send-file` containing the `filename` and a
-      unique `payloadId`.
+    * Broadcasts a `NetworkMessage` containing an `HttpRequestWrapper` for `POST /send-file`.
+      This wrapper contains the `filename` and a unique `payloadId`.
     * Sends the file content itself as a `Payload.Stream` to all peers.
-5. **Peer Receives Command:** The peer's `BridgeService` receives the `HttpRequestWrapper` first. It
-   parses the `filename` and `payloadId` and stores them in a map (`incomingFilePayloads`) to
-   prepare for the stream.
-6. **Peer Receives Stream:** The `handleStreamPayload` method is triggered. It uses the `payload.id`
-   to look up the `filename` from the map and saves the incoming stream to its local cache.
+5. **Peer Receives Command:** The peer's `BridgeService` collects the `NetworkMessage` from the
+   `incomingPayloads` flow. It parses the `filename` and `payloadId` and stores them in a map
+   (`incomingFilePayloads`) to prepare for the stream.
+6. **Peer Receives Stream:** The `handleStreamPayload` method is triggered directly by the
+   `NearbyConnectionsManager`'s callback. It uses the `payload.id` to look up the `filename` from
+   the map and saves the incoming stream to its local cache.
 
 ### 3.4. Detailed Flow: Topology Optimization
 
-This flow describes how the network self-optimizes its connections.
+This flow describes how the network self-optimizes its connections, driven by the `mesh-logic`
+module.
 
-1. **Gossip & Data Payloads:** `NearbyConnectionsManager` receives incoming `BYTES` payloads.
-    * If it's a data message, it extracts the `hopCount` and `sourceNodeId` from the
-      `HttpRequestWrapper` and passes them to `TopologyOptimizer.onDataPayloadReceived()`.
-    * If it's a gossip message, it extracts the list of peers and passes them to
-      `TopologyOptimizer.onGossipPayloadReceived()`.
-2. **Topology Analysis:** Periodically (e.g., every 60 seconds), `TopologyOptimizer`'s
-   `analyzeAndPerformRewiring()` method runs.
-    * It first cleans up any expired entries in its `nodeHopCounts` map (fading out old information
-      about distant nodes).
-    * It then analyzes its `neighborPeerLists` (from gossip) to identify redundant local
-      connections (e.g., a "triangle" where it's connected to two peers who are also connected to
-      each other).
-    * It consults its `nodeHopCounts` map to find the most distant node it knows about that is not a
-      direct peer.
-3. **Rewiring Decision:** If a redundant local connection is found and a more distant node is
-   identified, `TopologyOptimizer` decides to optimize.
-4. **Rewiring Action:** `TopologyOptimizer` instructs `NearbyConnectionsManager` to:
-    * `disconnectFromEndpoint()` the redundant peer.
-    * `requestConnection()` to the more distant node.
-    * A 60-second cooldown is applied to prevent rapid, destabilizing changes.
+1. **Payload Reception:** The Android `NearbyConnectionsManager` receives an incoming `BYTES`
+   payload from a peer. It does not parse it. It simply emits the raw `ByteArray` onto the
+   `incomingPayloads: SharedFlow<Pair<String, ByteArray>>`.
+2. **Optimizer Collection:** The `TopologyOptimizer` (in the `mesh-logic` module) is actively
+   collecting this `incomingPayloads` flow.
+3. **Message Parsing:** For each payload, the `TopologyOptimizer` deserializes it into a
+   `NetworkMessage`. It checks the message `type` to see if it's a data message or a
+   peer-list gossip message.
+4. **State Update:** Based on the message content, the optimizer updates its internal state:
+    * For data messages, it updates the `nodeHopCounts` map with the source node's ID and hop
+      count.
+    * For gossip messages, it updates the `neighborPeerLists` map with the peer's list of its
+      own neighbors.
+5. **Periodic Analysis:** Independently, a timer in `TopologyOptimizer` periodically runs the
+   `analyzeAndPerformRewiring()` method (e.g., every 60 seconds).
+6. **Rewiring Decision:** The analysis method inspects the `nodeHopCounts` and
+   `neighborPeerLists` to find opportunities for optimization (e.g., a redundant local "triangle"
+   connection and a known distant node).
+7. **Rewiring Action:** If an optimization is found, `TopologyOptimizer` calls methods on the
+   `ConnectionManager` interface it holds (e.g., `connectionManager.disconnectFrom(redundantPeer)`
+   and `connectionManager.connectTo(distantNode)`).
+8. **Execution:** The `NearbyConnectionsManager`, being the concrete implementation of the
+   `ConnectionManager`, receives these calls and executes them using the real Nearby Connections
+   API, thus changing the physical network topology.
 
 ## 4. Technology Stack
 
@@ -219,7 +226,6 @@ The Ktor server in `LocalHttpServer.kt` defines the following routes:
 
 * **Prefer Fluent Configuration:** Use scope functions (`apply`, `also`) for object configuration to
   improve readability.
-
   ```kotlin
   // Prefer this fluent style
   Intent(this, MyActivity::class.java).apply {
@@ -227,10 +233,8 @@ The Ktor server in `LocalHttpServer.kt` defines the following routes:
       action = "MY_ACTION"
   }.also { startActivity(it) }
   ```
-
 * **Use Explicit Data Fields:** When modeling data for transfer, prefer explicit fields over
   combined ones that require special parsing. This improves clarity and maintainability.
-
 * **Search Before Refactoring:** Before refactoring a shared class like `HttpRequestWrapper`,
   perform a global search to identify all usages. This prevents build failures by ensuring all
   dependent files are updated simultaneously.

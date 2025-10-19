@@ -158,8 +158,8 @@ class LocalHttpServer(
                         StatusResponse(
                             status = service.currentState.javaClass.simpleName,
                             id = service.endpointName,
-                            peerCount = service.nearbyConnectionsManager.connectedPeerCount,
-                            peerIds = service.nearbyConnectionsManager.connectedPeerIds
+                            peerCount = service.nearbyConnectionsManager.connectedPeers.value.size,
+                            peerIds = service.nearbyConnectionsManager.connectedPeers.value.toList()
                         )
                     )
                 }

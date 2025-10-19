@@ -15,30 +15,38 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.google.android.gms.nearby.connection.Payload
 import info.benjaminhill.localmesh.LocalHttpServer
-import info.benjaminhill.localmesh.util.LogFileWriter
 import info.benjaminhill.localmesh.MainActivity
 import info.benjaminhill.localmesh.R
+import info.benjaminhill.localmesh.logic.NetworkMessage
+import info.benjaminhill.localmesh.logic.TopologyOptimizer
 import info.benjaminhill.localmesh.util.AppLogger
 import info.benjaminhill.localmesh.util.AssetManager
-
+import info.benjaminhill.localmesh.util.LogFileWriter
 import info.benjaminhill.localmesh.util.PermissionUtils
 import io.ktor.http.parseUrlEncodedParameters
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.Json
 import java.io.File
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
-
 
 /**
  * Orchestrates the entire application, acting as the central hub for all components.
+ *
  * This class is a foreground service, meaning it will keep the application alive and running
  * even when the UI is not visible. It is responsible for initializing and managing the lifecycle
- * of the `NearbyConnectionsManager`, `LocalHttpServer`, and `ServiceHardener`.
- * It also handles the routing of incoming P2P messages to the appropriate components.
- * This class does not handle any UI, and it does not directly handle any networking.
- * It is surprising that this class has to handle file payloads in two parts, first the metadata, then the stream.
+ * of all major components, including the `TopologyOptimizer`, `NearbyConnectionsManager`,
+ * `LocalHttpServer`, and `ServiceHardener`.
+ *
+ * It has two primary responsibilities for data handling:
+ * 1.  It launches a coroutine to collect the `incomingPayloads` flow from the `ConnectionManager`.
+ *     For each payload, it deserializes the `NetworkMessage` and the `HttpRequestWrapper` within
+ *     it, and dispatches the request to the `LocalHttpServer` for processing.
+ * 2.  It provides a callback to the `NearbyConnectionsManager` for handling `STREAM` payloads,
+ *     which are used for file transfers.
  */
 class BridgeService : Service() {
     var currentState: BridgeState = BridgeState.Idle
@@ -77,26 +85,21 @@ class BridgeService : Service() {
             if (!::localHttpServer.isInitialized) {
                 localHttpServer = LocalHttpServer(this, logger)
             }
-            if (!::topologyOptimizer.isInitialized) {
-                topologyOptimizer = TopologyOptimizer(
-                    connectionsManagerProvider = { nearbyConnectionsManager },
-                    logger = logger,
-                    endpointName = endpointName
-                )
-            }
             if (!::nearbyConnectionsManager.isInitialized) {
                 nearbyConnectionsManager = NearbyConnectionsManager(
                     context = this,
                     endpointName = endpointName,
                     logger = logger,
                     payloadReceivedCallback = { _, payload ->
-                        when (payload.type) {
-                            Payload.Type.BYTES -> handleBytesPayload(payload)
-                            Payload.Type.STREAM -> handleStreamPayload(payload)
-                            else -> logger.e("Received unsupported payload type: ${payload.type}")
-                        }
-                    },
-                    topologyOptimizerCallback = topologyOptimizer
+                        handleStreamPayload(payload)
+                    }
+                )
+            }
+            if (!::topologyOptimizer.isInitialized) {
+                topologyOptimizer = TopologyOptimizer(
+                    connectionManager = nearbyConnectionsManager,
+                    log = { msg: String -> logger.log(msg) },
+                    endpointName = endpointName
                 )
             }
             logger.log("onCreate() finished successfully")
@@ -106,10 +109,10 @@ class BridgeService : Service() {
         }
     }
 
-    internal fun handleBytesPayload(payload: Payload) {
+    internal fun handleIncomingData(data: ByteArray) {
         serviceHardener.updateP2pMessageTime()
         logger.runCatchingWithLogging {
-            val jsonString = payload.asBytes()!!.toString(Charsets.UTF_8)
+            val jsonString = data.toString(Charsets.UTF_8)
             val wrapper = HttpRequestWrapper.fromJson(jsonString)
 
             if (wrapper.path == "/send-file") {
@@ -163,7 +166,17 @@ class BridgeService : Service() {
     }
 
     fun broadcast(jsonString: String) {
-        nearbyConnectionsManager.broadcastBytes(jsonString.toByteArray(Charsets.UTF_8))
+        val networkMessage = NetworkMessage(
+            type = MESSAGE_TYPE_DATA,
+            hopCount = 0,
+            messageId = UUID.randomUUID().toString(),
+            payloadContent = jsonString
+        )
+        val payload = Json.encodeToString(networkMessage).toByteArray(Charsets.UTF_8)
+        nearbyConnectionsManager.sendPayload(
+            nearbyConnectionsManager.connectedPeers.value.toList(),
+            payload
+        )
     }
 
     fun sendFile(file: File, destinationPath: String) {
@@ -177,7 +190,7 @@ class BridgeService : Service() {
         )
         broadcast(wrapper.toJson())
         nearbyConnectionsManager.sendPayload(
-            nearbyConnectionsManager.connectedPeerIds,
+            nearbyConnectionsManager.connectedPeers.value.toList(),
             streamPayload
         )
     }
@@ -216,6 +229,7 @@ class BridgeService : Service() {
             .build()
 
         startForeground(1, notification, FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
+        listenForIncomingData()
         nearbyConnectionsManager.start()
         topologyOptimizer.start()
         serviceHardener.start()
@@ -258,6 +272,15 @@ class BridgeService : Service() {
 
         currentState = BridgeState.Idle
         logger.log("Service stopped.")
+    }
+
+    private fun listenForIncomingData() {
+        CoroutineScope(ioDispatcher).launch {
+            nearbyConnectionsManager.incomingPayloads.collect { (endpointId, data) ->
+                logger.log("Collected ${data.size} bytes from $endpointId from flow.")
+                handleIncomingData(data)
+            }
+        }
     }
 
     fun restart() {

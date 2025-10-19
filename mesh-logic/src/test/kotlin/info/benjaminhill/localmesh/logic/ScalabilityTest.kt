@@ -23,7 +23,8 @@ class ScalabilityTest {
         // Create and start nodes
         val nodes = (0 until numNodes).map { i ->
             val manager = SimulatedConnectionManager(coroutineScope)
-            val optimizer = TopologyOptimizer(manager, { println("node$i: ${it.take(120)}") }, "node$i")
+            val optimizer =
+                TopologyOptimizer(manager, { println("node$i: ${it.take(120)}") }, "node$i")
             manager.start()
             optimizer.start()
             // Stagger startups to prevent race conditions forming stable, disconnected cliques

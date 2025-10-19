@@ -5,7 +5,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -18,32 +17,29 @@ private const val NODE_HOP_COUNT_EXPIRY_MS = 120_000L // 2 minutes
 private const val MESSAGE_TYPE_DATA: Byte = 0
 private const val MESSAGE_TYPE_GOSSIP_PEER_LIST: Byte = 1
 
-@Serializable
-private data class NetworkMessage(
-    val type: Byte,
-    val hopCount: Byte,
-    val messageId: String, // UUID as string
-    val payloadContent: String // The HttpRequestWrapper serialized to JSON
-)
-
 /**
- * Orchestrates the self-optimizing mesh network topology.
+ * The platform-agnostic "brains" of the self-optimizing mesh network.
  *
  * ## What it does
- * - Manages timers for gossip and rewiring analysis.
- * - Maintains cached lists of neighbor peers and distant node hop counts.
- * - Analyzes the network topology to identify redundant connections and distant nodes.
- * - Instructs the [NearbyConnectionsManager] to disconnect from redundant peers and connect to more distant ones to optimize the network.
- * - Implements a cooldown mechanism to prevent rapid topology changes.
- * - Cleans up expired node hop count data to prevent stale information.
+ * - Resides in the pure-Kotlin `mesh-logic` module, independent of the Android framework.
+ * - Consumes a [ConnectionManager] implementation to remain platform-agnostic.
+ * - Collects `incomingPayloads` from the `ConnectionManager` to analyze network traffic (both
+ *   application data and gossip messages).
+ * - Manages timers for periodic peer-list gossiping and rewiring analysis.
+ * - Maintains a map of the known network topology, including node hop counts and neighbor lists.
+ * - Contains the core heuristic to identify redundant local connections and distant nodes, issuing
+ *   commands to the `ConnectionManager` (`connectTo`, `disconnectFrom`) to optimize the network
+ *   into a "small-world" topology.
  *
  * ## What it doesn't do
- * - It does not directly handle Nearby Connections API calls; it delegates these to [NearbyConnectionsManager].
- * - It does not handle payload sending or receiving; it receives processed data from [NearbyConnectionsManager] via [TopologyOptimizerCallback].
+ * - It does not directly handle any platform-specific networking APIs.
+ * - It does not know whether it is running in a simulation or on a real Android device.
  *
  * ## Comparison to other classes
- * - **[NearbyConnectionsManager]:** This class is the "brains" of the network optimization, while [NearbyConnectionsManager] is the "hands" that execute the connection changes.
- * - **[BridgeService]:** This class is a component managed by [BridgeService] to provide the self-optimizing functionality.
+ * - **[ConnectionManager]:** This class is the "brains", while the `ConnectionManager` is the
+ *   abstract "hands" that this class directs.
+ * - **[BridgeService]:** This class is a component that is instantiated and managed by the
+ *   `BridgeService` on Android.
  */
 class TopologyOptimizer(
     private val connectionManager: ConnectionManager,
@@ -88,10 +84,13 @@ class TopologyOptimizer(
                     // This is a bit of a hack, but we need to get the source node ID from the payload.
                     // In the real app, this would be part of the HttpRequestWrapper.
                     // For the simulation, we'll just use the endpointId.
-                    nodeHopCounts[endpointId] = Pair(networkMessage.hopCount.toInt(), System.currentTimeMillis())
+                    nodeHopCounts[endpointId] =
+                        Pair(networkMessage.hopCount.toInt(), System.currentTimeMillis())
                 }
+
                 MESSAGE_TYPE_GOSSIP_PEER_LIST -> {
-                    val theirPeers = networkMessage.payloadContent.split(",").filter { it.isNotBlank() }
+                    val theirPeers =
+                        networkMessage.payloadContent.split(",").filter { it.isNotBlank() }
                     neighborPeerLists[endpointId] = theirPeers
                 }
             }
