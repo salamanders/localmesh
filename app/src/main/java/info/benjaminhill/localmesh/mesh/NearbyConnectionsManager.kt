@@ -30,11 +30,9 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.pow
 
-// The ideal number of connections for a stable mesh.
-private const val TARGET_CONNECTIONS = 3
 // The absolute maximum connections before refusing new ones.
 // A higher MAX allows for temporary connections during network healing.
-private const val MAX_CONNECTIONS = 4
+private const val MAX_CONNECTIONS = 5
 
 /**
  * The Android-specific implementation of the [ConnectionManager] interface.
