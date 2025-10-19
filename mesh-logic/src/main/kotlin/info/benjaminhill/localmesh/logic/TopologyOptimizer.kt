@@ -9,10 +9,15 @@ import kotlinx.serialization.json.Json
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
+// The number of connections to proactively seek.
 private const val TARGET_CONNECTIONS = 5
+// How often to share peer lists with neighbors.
 private const val GOSSIP_INTERVAL_MS = 30_000L
+// How often to check for opportunities to improve the network topology.
 private const val REWIRING_ANALYSIS_INTERVAL_MS = 60_000L
+// How long to wait after a rewiring before attempting another.
 private const val REWIRING_COOLDOWN_MS = 60_000L
+// How long to remember a node's hop count before it's considered stale.
 private const val NODE_HOP_COUNT_EXPIRY_MS = 120_000L // 2 minutes
 
 /**

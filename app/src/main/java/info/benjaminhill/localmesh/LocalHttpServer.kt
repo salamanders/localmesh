@@ -41,6 +41,8 @@ import java.io.File
 import io.ktor.server.cio.CIO as KtorCIO
 
 
+// A Ktor plugin to prevent browser caching of served files.
+// Ensures the latest version of the UI is always displayed.
 val NoCachePlugin = createApplicationPlugin(name = "NoCachePlugin") {
     onCall { call ->
         call.response.header("Cache-Control", "no-cache, no-store, must-revalidate")
@@ -133,11 +135,14 @@ class LocalHttpServer(
         logger.log("Attempting to start LocalHttpServer...")
         server = embeddedServer(KtorCIO, port = PORT) {
             install(NoCachePlugin)
+            // Automatically handle JSON serialization/deserialization for API endpoints.
             install(ContentNegotiation) {
                 json()
             }
+            // Enable support for HTTP Range requests, essential for video streaming.
             install(PartialContent)
             install(p2pBroadcastInterceptor)
+            // Centralized error handling to catch and log any unhandled exceptions.
             install(StatusPages) {
                 exception<Throwable> { call, cause ->
                     logger.e("Unhandled Ktor error on ${call.request.path()}", cause)

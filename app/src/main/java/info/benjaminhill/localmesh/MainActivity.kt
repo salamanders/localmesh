@@ -31,6 +31,7 @@ import info.benjaminhill.localmesh.util.PermissionUtils
  */
 class MainActivity : ComponentActivity() {
 
+    // Modern Android API for requesting permissions and handling the user's response.
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->

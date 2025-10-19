@@ -49,6 +49,7 @@ class BridgeServiceTest {
         service.serviceHardener = mockServiceHardener
         service.ioDispatcher = testDispatcher
         service.endpointName = "test-endpoint"
+        // Use Whitebox to inject a mock logger into a private field.
         Whitebox.setInternalState(service, "logger", mock<AppLogger>())
     }
 

@@ -44,6 +44,7 @@ import java.io.File
 @RunWith(RobolectricTestRunner::class)
 class LocalHttpServerTest {
 
+    // JUnit rule to create a temporary folder for each test, ensuring cleanup.
     @get:Rule
     val tempFolder = TemporaryFolder()
 
