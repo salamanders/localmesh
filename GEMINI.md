@@ -10,6 +10,8 @@ practices. For a user-focused summary, please see the main [README.md](README.md
 To prevent incorrect assumptions and premature declarations of success, the following workflow is
 mandatory for all tasks.
 
+**Root Cause Analysis Mandate:** For any error or bug, the primary goal is to identify and fix the root cause, not just the symptom. Before implementing a solution (especially one suggested by a tool or error message), first state your hypothesis for the underlying cause and use discovery tools (`read_file`, `search_file_content`, etc.) to gather evidence that proves or disproves it. Announce the confirmed root cause before proposing the fix.
+
 1. **State the Hypothesis:** Before attempting any fix, explicitly state the hypothesis for the root
    cause of the problem. (e.g., "The build is failing because of an incorrect context in the
    Composable function.")

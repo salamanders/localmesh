@@ -7,6 +7,7 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 
 /**
  * Unpacks the assets folder into a Ktor friendly normal folder.
@@ -19,6 +20,8 @@ object AssetManager {
     private const val TAG = "AssetManager"
     const val INCLUDED_ASSET_NAME = "web"
     const val UNPACKED_FILES_DIR = "web"
+
+    const val RESPECT_EXISTING_FILES = false
 
     /** Copies the defaults to the folder, only if they don't already exist (safe to run every startup, won't clobber distributed files) */
     fun unpack(context: Context) {
@@ -51,15 +54,12 @@ object AssetManager {
         if (path.isEmpty()) {
             return null
         }
-        val pathNoSlash = path.trim()
-            .removeSuffix("/")
-            .removePrefix("/")
-        val file = File(getFilesDir(context), pathNoSlash)
+        val file = File(getFilesDir(context), path)
         return when {
             !file.isDirectory -> null
-            File(file, "index.html").exists() -> "$pathNoSlash/index.html"
+            File(file, "index.html").exists() -> "$path/index.html"
             else -> {
-                Log.e(
+                Log.d(
                     TAG,
                     "Tried to navigate to a directory without an index.html? ${file.absolutePath}"
                 )
@@ -83,16 +83,22 @@ object AssetManager {
 
             when {
                 isDir -> copyAssetDir(context, assetPath, destFile)
-                !destFile.exists() -> {
+                destFile.exists() && RESPECT_EXISTING_FILES -> Log.d(
+                    TAG,
+                    "Skipping $assetPath, already exists"
+                )
+
+                else -> {
                     runCatching {
-                        Files.copy(context.assets.open(assetPath), destFile.toPath())
+                        Files.copy(
+                            context.assets.open(assetPath), destFile.toPath(),
+                            StandardCopyOption.REPLACE_EXISTING
+                        )
                         Log.d(TAG, "Copied $assetPath to ${destFile.absolutePath}")
                     }.onFailure { e ->
                         Log.e(TAG, "Failed to copy asset file: $assetPath", e)
                     }
                 }
-
-                else -> Log.d(TAG, "Skipping $assetPath, already exists")
             }
         }
     }

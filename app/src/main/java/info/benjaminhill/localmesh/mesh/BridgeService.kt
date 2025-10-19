@@ -113,7 +113,8 @@ class BridgeService : Service() {
         serviceHardener.updateP2pMessageTime()
         logger.runCatchingWithLogging {
             val jsonString = data.toString(Charsets.UTF_8)
-            val wrapper = HttpRequestWrapper.fromJson(jsonString)
+            val networkMessage = Json.decodeFromString<NetworkMessage>(jsonString)
+            val wrapper = HttpRequestWrapper.fromJson(networkMessage.payloadContent)
 
             if (wrapper.path == "/send-file") {
                 val params = wrapper.queryParams.parseUrlEncodedParameters()
@@ -303,5 +304,6 @@ class BridgeService : Service() {
         const val ACTION_STOP = "info.benjaminhill.localmesh.action.STOP"
         private const val CHANNEL_ID = "P2PBridgeServiceChannel"
         private const val TAG = "BridgeService"
+        private const val MESSAGE_TYPE_DATA: Byte = 0
     }
 }

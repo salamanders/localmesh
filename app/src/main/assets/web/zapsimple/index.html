@@ -6,12 +6,6 @@
     <meta content="width=device-width, initial-scale=1.0" name="viewport">
     <title>Connected Spark Animation</title>
     <style>
-        :root {
-            /* We'll use hue-rotate for color shifting, so the base color is less critical */
-            --spark-color: #00ffff;
-            --glow-color: #00ffff88;
-        }
-
         html, body {
             margin: 0;
             padding: 0;
@@ -143,6 +137,11 @@
             80% { filter: hue-rotate(288deg); }
         }
 
+        :root {
+            /* We'll use hue-rotate for color shifting, so the base color is less critical */
+            --spark-color: #00ffff;
+            --glow-color: #00ffff88;
+        }
     </style>
 </head>
 <body>
@@ -220,7 +219,7 @@
             ctx.globalAlpha = Math.max(0, this.life * 2.5); // Fade out
             ctx.strokeStyle = this.color;
             ctx.lineWidth = this.lineWidth;
-            ctx.shadowBlur = 100; // Large glow effect
+            // ctx.shadowBlur = 100; // Large glow effect
             ctx.shadowColor = this.color;
 
             ctx.beginPath();
@@ -264,7 +263,7 @@
 
     // --- Main Animation Loop ---
     function animate() {
-        console.log("Animating... Zaps count: " + zaps.length);
+        // console.log("Animating... Zaps count: " + zaps.length);
         // Clear canvas for next frame
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 

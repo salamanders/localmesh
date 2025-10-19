@@ -2,6 +2,8 @@ package info.benjaminhill.localmesh.display
 
 import android.annotation.SuppressLint
 import android.util.Log
+import android.view.View
+import android.view.ViewGroup
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
@@ -27,12 +29,21 @@ fun WebViewScreen(url: String, onWebViewReady: (WebView) -> Unit = {}) {
     AndroidView(
         factory = { context ->
             WebView(context).apply {
+                layoutParams = ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
                 onWebViewReady(this)
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
                 settings.displayZoomControls = false
                 settings.cacheMode = WebSettings.LOAD_NO_CACHE
                 settings.mediaPlaybackRequiresUserGesture = false
+                setLayerType(View.LAYER_TYPE_HARDWARE, null)
+
+                // Enables chrome://inspect
+                WebView.setWebContentsDebuggingEnabled(true)
+
                 webViewClient = object : WebViewClient() {
                     override fun onPageFinished(view: WebView?, url: String?) {
                         super.onPageFinished(view, url)

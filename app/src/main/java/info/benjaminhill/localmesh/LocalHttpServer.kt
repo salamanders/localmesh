@@ -29,6 +29,7 @@ import io.ktor.server.request.httpMethod
 import io.ktor.server.request.path
 import io.ktor.server.request.receiveMultipart
 import io.ktor.server.request.receiveParameters
+import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondRedirect
 import io.ktor.server.routing.get
@@ -39,6 +40,14 @@ import kotlinx.serialization.Serializable
 import java.io.File
 import io.ktor.server.cio.CIO as KtorCIO
 
+
+val NoCachePlugin = createApplicationPlugin(name = "NoCachePlugin") {
+    onCall { call ->
+        call.response.header("Cache-Control", "no-cache, no-store, must-revalidate")
+        call.response.header("Pragma", "no-cache")
+        call.response.header("Expires", "0")
+    }
+}
 
 @Serializable
 data class StatusResponse(
@@ -123,6 +132,7 @@ class LocalHttpServer(
     fun start(): Boolean = logger.runCatchingWithLogging {
         logger.log("Attempting to start LocalHttpServer...")
         server = embeddedServer(KtorCIO, port = PORT) {
+            install(NoCachePlugin)
             install(ContentNegotiation) {
                 json()
             }
@@ -139,14 +149,12 @@ class LocalHttpServer(
             }
             install(createApplicationPlugin(name = "RedirectFix") {
                 onCall { call ->
-                    val rawPath = call.request.path()
-                    logger.log("RedirectFix: raw path: \"$rawPath\"")
-                    val path = rawPath.trimStart('/')
-                    logger.log("RedirectFix: trimmed path: \"$path\"")
-                    AssetManager.getRedirectPath(service.applicationContext, path)?.let {
-                        logger.log("Redirecting to: \"$it\"")
-                        call.respondRedirect(it)
-                    }
+                    val path = call.request.path().trim('/')
+                    AssetManager.getRedirectPath(service.applicationContext, path)
+                        ?.let { redirectPath ->
+                            logger.log("RedirectFix: raw path: \"${call.request.path()}\" -> new path: \"$redirectPath\"")
+                            call.respondRedirect("/$redirectPath")
+                        }
                 }
             })
             routing {
