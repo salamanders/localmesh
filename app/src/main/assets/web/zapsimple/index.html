@@ -297,13 +297,20 @@
 
     // --- Initialization ---
     function init() {
+        const container = document.querySelector('.animation-container');
+
         // Set initial canvas size and add listener for window resize
         function resizeCanvas() {
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
+            // Use the container's dimensions for a more robust sizing
+            canvas.width = container.offsetWidth;
+            canvas.height = container.offsetHeight;
         }
-        window.addEventListener('resize', resizeCanvas);
-        resizeCanvas();
+
+        // Use ResizeObserver for more reliable resize detection
+        const resizeObserver = new ResizeObserver(resizeCanvas);
+        resizeObserver.observe(container);
+
+        resizeCanvas(); // Initial size set
 
         // Kick off the animation loops
         animate();
@@ -311,7 +318,8 @@
         console.log('LOCALMESH_SCRIPT_SUCCESS:zap');
     }
 
-    init();
+    // Defer initialization until the DOM is fully loaded
+    window.addEventListener('DOMContentLoaded', init);
 </script>
 
 </body>
