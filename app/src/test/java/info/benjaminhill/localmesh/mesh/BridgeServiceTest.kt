@@ -2,9 +2,12 @@ package info.benjaminhill.localmesh.mesh
 
 import com.google.android.gms.nearby.connection.Payload
 import info.benjaminhill.localmesh.LocalHttpServer
+import info.benjaminhill.localmesh.logic.HttpRequestWrapper
+import info.benjaminhill.localmesh.logic.NetworkMessage
 import info.benjaminhill.localmesh.util.AppLogger
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.serialization.json.Json
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
@@ -59,7 +62,12 @@ class BridgeServiceTest {
             body = "",
             sourceNodeId = "remote-node"
         )
-        val jsonString = wrapper.toJson()
+        val networkMessage = NetworkMessage(
+            hopCount = 0,
+            messageId = "test-message-id",
+            httpRequest = wrapper
+        )
+        val jsonString = Json.encodeToString(NetworkMessage.serializer(), networkMessage)
         val payload = Payload.fromBytes(jsonString.toByteArray(Charsets.UTF_8))
 
         // When

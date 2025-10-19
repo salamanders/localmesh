@@ -1,4 +1,4 @@
-package info.benjaminhill.localmesh.mesh
+package info.benjaminhill.localmesh.logic
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json

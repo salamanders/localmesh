@@ -17,6 +17,7 @@ import com.google.android.gms.nearby.connection.Payload
 import info.benjaminhill.localmesh.LocalHttpServer
 import info.benjaminhill.localmesh.MainActivity
 import info.benjaminhill.localmesh.R
+import info.benjaminhill.localmesh.logic.HttpRequestWrapper
 import info.benjaminhill.localmesh.logic.NetworkMessage
 import info.benjaminhill.localmesh.logic.TopologyOptimizer
 import info.benjaminhill.localmesh.util.AppLogger
@@ -114,20 +115,21 @@ class BridgeService : Service() {
         logger.runCatchingWithLogging {
             val jsonString = data.toString(Charsets.UTF_8)
             val networkMessage = Json.decodeFromString<NetworkMessage>(jsonString)
-            val wrapper = HttpRequestWrapper.fromJson(networkMessage.payloadContent)
 
-            if (wrapper.path == "/send-file") {
-                val params = wrapper.queryParams.parseUrlEncodedParameters()
-                val filename = params["filename"]
-                val payloadId = params["payloadId"]?.toLongOrNull()
-                if (filename != null && payloadId != null) {
-                    incomingFilePayloads[payloadId] = filename
-                    logger.log("Expecting file '$filename' for payload $payloadId")
+            networkMessage.httpRequest?.let { wrapper ->
+                if (wrapper.path == "/send-file") {
+                    val params = wrapper.queryParams.parseUrlEncodedParameters()
+                    val filename = params["filename"]
+                    val payloadId = params["payloadId"]?.toLongOrNull()
+                    if (filename != null && payloadId != null) {
+                        incomingFilePayloads[payloadId] = filename
+                        logger.log("Expecting file '$filename' for payload $payloadId")
+                    }
                 }
-            }
 
-            CoroutineScope(ioDispatcher).launch {
-                localHttpServer.dispatchRequest(wrapper)
+                CoroutineScope(ioDispatcher).launch {
+                    localHttpServer.dispatchRequest(wrapper)
+                }
             }
         }
     }
@@ -166,12 +168,11 @@ class BridgeService : Service() {
         return START_STICKY
     }
 
-    fun broadcast(jsonString: String) {
+    fun broadcast(wrapper: HttpRequestWrapper) {
         val networkMessage = NetworkMessage(
-            type = MESSAGE_TYPE_DATA,
             hopCount = 0,
             messageId = UUID.randomUUID().toString(),
-            payloadContent = jsonString
+            httpRequest = wrapper
         )
         val payload = Json.encodeToString(networkMessage).toByteArray(Charsets.UTF_8)
         nearbyConnectionsManager.sendPayload(
@@ -189,7 +190,7 @@ class BridgeService : Service() {
             body = "",
             sourceNodeId = endpointName
         )
-        broadcast(wrapper.toJson())
+        broadcast(wrapper)
         nearbyConnectionsManager.sendPayload(
             nearbyConnectionsManager.connectedPeers.value.toList(),
             streamPayload
@@ -304,6 +305,5 @@ class BridgeService : Service() {
         const val ACTION_STOP = "info.benjaminhill.localmesh.action.STOP"
         private const val CHANNEL_ID = "P2PBridgeServiceChannel"
         private const val TAG = "BridgeService"
-        private const val MESSAGE_TYPE_DATA: Byte = 0
     }
 }

@@ -14,8 +14,6 @@ private const val GOSSIP_INTERVAL_MS = 30_000L
 private const val REWIRING_ANALYSIS_INTERVAL_MS = 60_000L
 private const val REWIRING_COOLDOWN_MS = 60_000L
 private const val NODE_HOP_COUNT_EXPIRY_MS = 120_000L // 2 minutes
-private const val MESSAGE_TYPE_DATA: Byte = 0
-private const val MESSAGE_TYPE_GOSSIP_PEER_LIST: Byte = 1
 
 /**
  * The platform-agnostic "brains" of the self-optimizing mesh network.
@@ -79,20 +77,13 @@ class TopologyOptimizer(
             val jsonString = payload.toString(Charsets.UTF_8)
             val networkMessage = Json.decodeFromString<NetworkMessage>(jsonString)
 
-            when (networkMessage.type) {
-                MESSAGE_TYPE_DATA -> {
-                    // This is a bit of a hack, but we need to get the source node ID from the payload.
-                    // In the real app, this would be part of the HttpRequestWrapper.
-                    // For the simulation, we'll just use the endpointId.
-                    nodeHopCounts[endpointId] =
-                        Pair(networkMessage.hopCount.toInt(), System.currentTimeMillis())
-                }
+            networkMessage.httpRequest?.let {
+                nodeHopCounts[it.sourceNodeId] =
+                    Pair(networkMessage.hopCount.toInt(), System.currentTimeMillis())
+            }
 
-                MESSAGE_TYPE_GOSSIP_PEER_LIST -> {
-                    val theirPeers =
-                        networkMessage.payloadContent.split(",").filter { it.isNotBlank() }
-                    neighborPeerLists[endpointId] = theirPeers
-                }
+            networkMessage.gossip?.let {
+                neighborPeerLists[endpointId] = it.peerList
             }
         }
     }
@@ -102,13 +93,11 @@ class TopologyOptimizer(
             delay(GOSSIP_INTERVAL_MS)
             val peers = connectionManager.connectedPeers.value.toList()
             if (peers.isEmpty()) continue
-            val data = peers.joinToString(",").toByteArray(Charsets.UTF_8)
             val messageId = UUID.randomUUID()
             val networkMessage = NetworkMessage(
-                type = MESSAGE_TYPE_GOSSIP_PEER_LIST,
                 hopCount = 0,
                 messageId = messageId.toString(),
-                payloadContent = data.toString(Charsets.UTF_8)
+                gossip = Gossip(peerList = peers)
             )
             val payload = Json.encodeToString(networkMessage).toByteArray(Charsets.UTF_8)
             connectionManager.sendPayload(peers, payload)

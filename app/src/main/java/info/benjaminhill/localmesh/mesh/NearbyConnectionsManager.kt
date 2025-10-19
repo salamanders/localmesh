@@ -33,18 +33,6 @@ import kotlin.math.pow
 private const val TARGET_CONNECTIONS = 3
 private const val MAX_CONNECTIONS = 4
 
-const val MESSAGE_TYPE_DATA: Byte = 0
-private const val MESSAGE_TYPE_GOSSIP_PEER_LIST: Byte = 1
-
-@Serializable
-private data class NetworkMessage(
-    val type: Byte,
-    val hopCount: Byte,
-    val messageId: String, // UUID as string
-    val payloadContent: String // The HttpRequestWrapper serialized to JSON
-)
-
-
 /**
  * The Android-specific implementation of the [ConnectionManager] interface.
  *
