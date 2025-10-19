@@ -13,6 +13,7 @@ class IslandMergingTest {
 
     @Before
     fun setup() {
+        // Clear the singleton registry to ensure a clean state for each test.
         SimulationRegistry.clear()
     }
 

@@ -30,7 +30,10 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.pow
 
+// The ideal number of connections for a stable mesh.
 private const val TARGET_CONNECTIONS = 3
+// The absolute maximum connections before refusing new ones.
+// A higher MAX allows for temporary connections during network healing.
 private const val MAX_CONNECTIONS = 4
 
 /**
@@ -113,6 +116,7 @@ class NearbyConnectionsManager(
 
     private suspend fun startAdvertising() = logger.runCatchingWithLogging {
         withContext(Dispatchers.IO) {
+            // P2P_CLUSTER is a balanced strategy for a mesh network with multiple connections.
             val advertisingOptions =
                 AdvertisingOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).build()
             connectionsClient.startAdvertising(
@@ -130,6 +134,7 @@ class NearbyConnectionsManager(
 
     private suspend fun startDiscovery() = logger.runCatchingWithLogging {
         withContext(Dispatchers.IO) {
+            // P2P_CLUSTER is a balanced strategy for a mesh network with multiple connections.
             val discoveryOptions =
                 DiscoveryOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).build()
             connectionsClient.startDiscovery(

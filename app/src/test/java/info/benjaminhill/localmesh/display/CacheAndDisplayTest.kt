@@ -53,9 +53,11 @@ class CacheAndDisplayTest {
         AssetManager.unpack(ApplicationProvider.getApplicationContext())
 
         // 2. Replace the real NearbyConnectionsManager with a mock to prevent network calls
+        // This is necessary because Robolectric creates a real service, but we want to
+        // isolate the test from actual P2P communication.
         mockNearbyConnectionsManager = mock()
         val ncmField = BridgeService::class.java.getDeclaredField("nearbyConnectionsManager")
-        ncmField.isAccessible = true
+        ncmField.isAccessible = true // Allow modification of a private field
         ncmField.set(bridgeService, mockNearbyConnectionsManager)
 
         // 3. Get a reference to the LocalHttpServer created by the service
