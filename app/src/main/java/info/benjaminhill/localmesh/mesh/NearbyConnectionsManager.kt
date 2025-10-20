@@ -20,6 +20,8 @@ import info.benjaminhill.localmesh.logic.ConnectionManager
 import info.benjaminhill.localmesh.util.AppLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -74,10 +76,14 @@ class NearbyConnectionsManager(
     private val retryCounts = mutableMapOf<String, Int>()
     private val seenMessageIds = ConcurrentHashMap<UUID, Long>()
 
+    private val scope = CoroutineScope(Dispatchers.IO)
+    private var isDiscoveryModeActive = false
+    private var discoveryModeJob: Job? = null
+
 
     override fun start() {
         logger.log("NearbyConnectionsManager.start()")
-        CoroutineScope(Dispatchers.IO).launch {
+        scope.launch {
             startAdvertising()
             startDiscovery()
         }
@@ -86,6 +92,7 @@ class NearbyConnectionsManager(
     override fun stop() {
         logger.log("NearbyConnectionsManager.stop()")
         connectionsClient.stopAllEndpoints()
+        scope.cancel()
         connectedPeers.value = emptySet()
         retryCounts.clear()
         seenMessageIds.clear()
@@ -110,6 +117,26 @@ class NearbyConnectionsManager(
 
     override fun sendPayload(endpointIds: List<String>, payload: ByteArray) {
         sendPayload(endpointIds, Payload.fromBytes(payload))
+    }
+
+    override fun enterDiscoveryMode() {
+        if (isDiscoveryModeActive) {
+            logger.log("Already in discovery mode. Ignoring request.")
+            return
+        }
+        logger.log("Entering time-limited island discovery mode for 20 seconds.")
+        isDiscoveryModeActive = true
+
+        // Cancel any previous job to be safe
+        discoveryModeJob?.cancel()
+
+        discoveryModeJob = scope.launch {
+            delay(20_000L)
+            if (isDiscoveryModeActive) {
+                logger.log("Island discovery timeout reached. Exiting discovery mode.")
+                isDiscoveryModeActive = false
+            }
+        }
     }
 
     private suspend fun startAdvertising() = logger.runCatchingWithLogging {
@@ -156,7 +183,7 @@ class NearbyConnectionsManager(
                     Payload.Type.BYTES -> {
                         val bytes = payload.asBytes()!!
                         logger.log("Emitting ${bytes.size} bytes from $endpointId to incomingPayloads flow.")
-                        CoroutineScope(Dispatchers.IO).launch {
+                        scope.launch {
                             incomingPayloads.emit(endpointId to bytes)
                         }
                     }
@@ -235,7 +262,16 @@ class NearbyConnectionsManager(
             discoveredEndpointInfo: DiscoveredEndpointInfo
         ) {
             logger.log("onEndpointFound: ${discoveredEndpointInfo.endpointName} (id:$endpointId)")
-            CoroutineScope(Dispatchers.IO).launch {
+
+            if (isDiscoveryModeActive) {
+                logger.log("In discovery mode, attempting to connect to new endpoint '$endpointId' to merge islands.")
+                isDiscoveryModeActive = false // Exit discovery mode immediately upon finding a candidate
+                discoveryModeJob?.cancel()
+                requestConnection(endpointId)
+                return
+            }
+
+            scope.launch {
                 discoveredEndpoints.emit(endpointId)
             }
         }
@@ -278,7 +314,7 @@ class NearbyConnectionsManager(
             retryCounts[key] = nextRetry
             val backoffMillis = (1000 * 2.0.pow(currentRetries)).toLong() + (0..1000).random()
             logger.log("Scheduling retry for $description on '$key' in $backoffMillis ms (attempt $nextRetry)")
-            CoroutineScope(Dispatchers.IO).launch {
+            scope.launch {
                 delay(backoffMillis)
                 action()
             }
