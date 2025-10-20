@@ -9,18 +9,16 @@ import kotlinx.serialization.json.Json
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
-// The number of connections to proactively seek.
-private const val TARGET_CONNECTIONS = 4
 // How often to share peer lists with neighbors.
-private const val GOSSIP_INTERVAL_MS = 30_000L
+private const val GOSSIP_INTERVAL_MS = 30 * 1_000L
 // How often to check for opportunities to improve the network topology.
-private const val REWIRING_ANALYSIS_INTERVAL_MS = 60_000L
+private const val REWIRING_ANALYSIS_INTERVAL_MS = 1 * 60 * 1_000L
 // How often to check for opportunities to merge network islands.
-private const val ISLAND_DISCOVERY_ANALYSIS_INTERVAL_MS = 10_000L // Production: 300_000L (5 minutes)
+private const val ISLAND_DISCOVERY_ANALYSIS_INTERVAL_MS = 5 * 60 * 1_000L
 // How long to wait after a rewiring before attempting another.
-private const val REWIRING_COOLDOWN_MS = 60_000L
+private const val REWIRING_COOLDOWN_MS = 1 * 60 * 1_000L
 // How long to remember a node's hop count before it's considered stale.
-private const val NODE_HOP_COUNT_EXPIRY_MS = 120_000L // 2 minutes
+private const val NODE_HOP_COUNT_EXPIRY_MS = 2 * 60 * 1_000L
 
 /**
  * The platform-agnostic "brains" of the self-optimizing mesh network.
@@ -50,8 +48,14 @@ class TopologyOptimizer(
     private val connectionManager: ConnectionManager,
     private val log: (String) -> Unit,
     private val endpointName: String,
+    private val islandDiscoveryAnalysisIntervalMs: Long = ISLAND_DISCOVERY_ANALYSIS_INTERVAL_MS,
+    private val targetConnections: Int = TARGET_CONNECTIONS,
+    private val gossipIntervalMs: Long = GOSSIP_INTERVAL_MS
 ) {
-
+    companion object {
+        // The number of connections to proactively seek.
+        const val TARGET_CONNECTIONS = 4
+    }
     private val neighborPeerLists = ConcurrentHashMap<String, List<String>>()
     private val nodeHopCounts =
         ConcurrentHashMap<String, Pair<Int, Long>>() // endpointId to (hopCount, timestamp)
@@ -101,7 +105,7 @@ class TopologyOptimizer(
 
     private fun CoroutineScope.listenForDiscoveredEndpoints() = launch {
         connectionManager.discoveredEndpoints.collect { endpointId ->
-            if (connectionManager.connectedPeers.value.size < TARGET_CONNECTIONS) {
+            if (connectionManager.connectedPeers.value.size < targetConnections) {
                 log("Attempting to connect to discovered endpoint $endpointId")
                 connectionManager.connectTo(endpointId)
             }
@@ -126,7 +130,7 @@ class TopologyOptimizer(
 
     private fun CoroutineScope.startGossip() = launch {
         while (true) {
-            delay(GOSSIP_INTERVAL_MS)
+            delay(gossipIntervalMs)
             val peers = connectionManager.connectedPeers.value.toList()
             if (peers.isEmpty()) continue
             val messageId = UUID.randomUUID()
@@ -147,6 +151,50 @@ class TopologyOptimizer(
         }
     }
 
+    private fun CoroutineScope.startIslandDiscoveryAnalysis() = launch {
+        while (true) {
+            delay(islandDiscoveryAnalysisIntervalMs)
+            analyzeAndPerformIslandDiscovery()
+        }
+    }
+
+    private fun findRedundantPeer(): String? {
+        val myPeers = connectionManager.connectedPeers.value
+        if (myPeers.size < 2) return null
+
+        for (peerA in myPeers) {
+            val peersOfPeerA = neighborPeerLists[peerA]?.toSet() ?: continue
+            for (peerB in myPeers) {
+                if (peerA != peerB && peersOfPeerA.contains(peerB)) {
+                    log("Found redundant connection: We are connected to $peerA and $peerB, and they are connected to each other.")
+                    return peerB
+                }
+            }
+        }
+        return null
+    }
+
+    private fun analyzeAndPerformIslandDiscovery() {
+        log("Analyzing network for potential islands.")
+
+        val myPeers = connectionManager.connectedPeers.value
+        if (myPeers.size < targetConnections) {
+            log("Not enough connections to justify island discovery. Skipping.")
+            return
+        }
+
+        val redundantPeer = findRedundantPeer()
+        if (redundantPeer == null) {
+            log("No redundant peer found to drop for island discovery. Skipping.")
+            return
+        }
+
+        log("Initiating island discovery: Dropping redundant peer '$redundantPeer' to search for new islands.")
+        connectionManager.disconnectFrom(redundantPeer)
+        connectionManager.enterDiscoveryMode()
+    }
+
+
     private fun analyzeAndPerformRewiring() {
         log("Analyzing network for rewiring opportunities.")
 
@@ -155,20 +203,13 @@ class TopologyOptimizer(
             return
         }
 
+        val redundantPeer = findRedundantPeer()
+        if (redundantPeer == null) {
+            log("No redundant local connections found for rewiring.")
+            return
+        }
+
         val myPeers = connectionManager.connectedPeers.value
-        if (myPeers.size < 2) {
-            log("Not enough peers to analyze for rewiring.")
-            return
-        }
-
-        // Find redundant local connections (triangles)
-        val peerToDisconnect = findRedundantPeer()
-
-        if (peerToDisconnect == null) {
-            log("No redundant local connections found.")
-            return
-        }
-
         // Find the most distant node we know of
         val now = System.currentTimeMillis()
         val mostDistantNodeEntry = nodeHopCounts.entries

@@ -7,6 +7,8 @@ import kotlinx.coroutines.flow.StateFlow
  * A platform-agnostic interface for managing peer-to-peer connections.
  */
 interface ConnectionManager {
+    /** The absolute maximum connections before refusing new ones. */
+    val maxConnections: Int
 
     /** A flow that emits the set of currently connected endpoint IDs. */
     val connectedPeers: StateFlow<Set<String>>
@@ -45,4 +47,9 @@ interface ConnectionManager {
      * @param endpointId The ID of the endpoint to disconnect from.
      */
     fun disconnectFrom(endpointId: String)
+
+    /**
+     * Enters a special, time-limited discovery mode to find new network islands.
+     */
+    fun enterDiscoveryMode()
 }
