@@ -93,7 +93,8 @@ class BridgeService : Service() {
                     logger = logger,
                     payloadReceivedCallback = { _, payload ->
                         handleStreamPayload(payload)
-                    }
+                    },
+                    maxConnections = TopologyOptimizer.TARGET_CONNECTIONS + 1
                 )
             }
             if (!::topologyOptimizer.isInitialized) {

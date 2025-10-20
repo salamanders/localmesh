@@ -9,8 +9,6 @@ import kotlinx.serialization.json.Json
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
-// The number of connections to proactively seek.
-private const val TARGET_CONNECTIONS = 4
 // How often to share peer lists with neighbors.
 private const val GOSSIP_INTERVAL_MS = 30_000L
 // How often to check for opportunities to improve the network topology.
@@ -49,7 +47,10 @@ class TopologyOptimizer(
     private val log: (String) -> Unit,
     private val endpointName: String,
 ) {
-
+    companion object {
+        // The number of connections to proactively seek.
+        const val TARGET_CONNECTIONS = 4
+    }
     private val neighborPeerLists = ConcurrentHashMap<String, List<String>>()
     private val nodeHopCounts =
         ConcurrentHashMap<String, Pair<Int, Long>>() // endpointId to (hopCount, timestamp)
