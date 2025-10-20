@@ -56,8 +56,9 @@
         return parseInt(id, 10);
     }
 
-    function setupAudio() {
-        navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+    async function setupAudio() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             audioContext = new (window.AudioContext || window.webkitAudioContext)();
             analyser = audioContext.createAnalyser();
             source = audioContext.createMediaStreamSource(stream);
@@ -71,11 +72,10 @@
             setup();
             animate();
             console.log('LOCALMESH_SCRIPT_SUCCESS:equalizer');
-        }).catch(err => {
+        } catch (err) {
             console.error('Error accessing microphone:', err);
             message.textContent = 'Could not access microphone. Please allow permission.';
-            console.log('LOCALMESH_SCRIPT_SUCCESS:equalizer');
-        });
+        }
     }
 
     function setup() {
@@ -112,12 +112,12 @@
 
     // Initial setup, and now start audio automatically.
     setup();
-    try {
-        setupAudio();
-    } catch (e) {
-        console.error("Audio not supported, but that's ok for a test.", e);
-        console.log('LOCALMESH_SCRIPT_SUCCESS:equalizer');
+    function autoStartInWebView() {
+        if (!audioContext) {
+            setupAudio();
+        }
     }
+
 </script>
 </body>
 </html>
