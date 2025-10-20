@@ -4,9 +4,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
+import kotlin.collections.ArrayDeque
 
 class IslandMergingTest {
 
@@ -24,13 +26,15 @@ class IslandMergingTest {
 
         // Create nodes
         val nodes = (0 until numNodes).map { i ->
-            val manager = SimulatedConnectionManager(coroutineScope)
+            val manager = SimulatedConnectionManager(coroutineScope, startWithDiscovery = false)
             val optimizer = TopologyOptimizer(
                 connectionManager = manager,
                 log = { println("node$i: ${it.take(120)}") },
                 endpointName = "node$i",
                 targetConnections = cliqueSize - 1,
-                gossipIntervalMs = 1000L // Fast for testing
+                gossipIntervalMs = 500L, // Fast for testing
+                initialIslandDiscoveryDelayMs = 500L,
+                islandDiscoveryAnalysisIntervalMs = 1000L
             )
             manager to optimizer
         }
@@ -49,7 +53,16 @@ class IslandMergingTest {
         formClique(island2)
 
         // Give them time to connect
-        delay(1000)
+        withTimeout(5000L) {
+            while (true) {
+                val island1Ready = island1.all { (manager, _) -> manager.connectedPeers.value.size == cliqueSize - 1 }
+                val island2Ready = island2.all { (manager, _) -> manager.connectedPeers.value.size == cliqueSize - 1 }
+                if (island1Ready && island2Ready) {
+                    break
+                }
+                delay(100) // Poll every 100ms
+            }
+        }
 
         // Verify two separate cliques
         island1.forEach { (manager, _) ->
@@ -62,20 +75,12 @@ class IslandMergingTest {
         println("Two islands formed. Waiting for auto-merge...")
 
         // Wait for the optimizer's island discovery logic to trigger and merge the networks
-        delay(5000)
+        delay(6000)
 
         // Verify that all nodes are now part of a single network
-        // A simple check is that each node has at least `cliqueSize-1` connections,
-        // and at least one node has more.
-        var totalConnections = 0
-        nodes.forEach { (manager, _) ->
-            totalConnections += manager.connectedPeers.value.size
-        }
+        assert(isNetworkConnected(nodes)) { "Network is not fully connected after merge attempt." }
 
-        // In a merged 6-node network, we expect more than (2*2 + 2*2) = 8 connections
-        assert(totalConnections > (cliqueSize - 1) * numNodes)
-
-        println("Islands merged successfully. Total connections: $totalConnections")
+        println("Islands merged successfully.")
     }
 
     private fun formClique(nodes: List<Pair<SimulatedConnectionManager, TopologyOptimizer>>) {
@@ -86,5 +91,30 @@ class IslandMergingTest {
                 }
             }
         }
+    }
+
+    private fun isNetworkConnected(nodes: List<Pair<SimulatedConnectionManager, TopologyOptimizer>>): Boolean {
+        if (nodes.isEmpty()) return true
+
+        val visited = mutableSetOf<String>()
+        val queue = ArrayDeque<String>()
+        val nodeMap = nodes.associate { (manager, _) -> manager.id to manager }
+
+        val startNodeId = nodes.first().first.id
+        queue.add(startNodeId)
+        visited.add(startNodeId)
+
+        while (queue.isNotEmpty()) {
+            val currentNodeId = queue.removeFirst()
+            val currentNode = nodeMap[currentNodeId] ?: continue
+
+            currentNode.connectedPeers.value.forEach { peerId ->
+                if (peerId !in visited) {
+                    visited.add(peerId)
+                    queue.add(peerId)
+                }
+            }
+        }
+        return visited.size == nodes.size
     }
 }
