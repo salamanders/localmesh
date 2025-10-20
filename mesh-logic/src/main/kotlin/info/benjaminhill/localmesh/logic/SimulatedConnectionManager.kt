@@ -14,7 +14,8 @@ import java.util.concurrent.ConcurrentHashMap
  */
 class SimulatedConnectionManager(
     private val coroutineScope: CoroutineScope = CoroutineScope(Dispatchers.Default),
-    override val maxConnections: Int = 5
+    override val maxConnections: Int = 5,
+    private val startWithDiscovery: Boolean = true
 ) : ConnectionManager {
 
     val id: String = UUID.randomUUID().toString()
@@ -28,10 +29,12 @@ class SimulatedConnectionManager(
     }
 
     override fun start() {
-        coroutineScope.launch {
-            SimulationRegistry.getPeers().forEach { peer ->
-                if (peer.id != this@SimulatedConnectionManager.id) {
-                    discoveredEndpoints.emit(peer.id)
+        if (startWithDiscovery) {
+            coroutineScope.launch {
+                SimulationRegistry.getPeers().forEach { peer ->
+                    if (peer.id != this@SimulatedConnectionManager.id) {
+                        discoveredEndpoints.emit(peer.id)
+                    }
                 }
             }
         }

@@ -51,7 +51,9 @@ class TopologyOptimizer(
     private val log: (String) -> Unit,
     private val endpointName: String,
     private val targetConnections: Int = TARGET_CONNECTIONS,
-    private val gossipIntervalMs: Long = GOSSIP_INTERVAL_MS
+    private val gossipIntervalMs: Long = GOSSIP_INTERVAL_MS,
+    private val initialIslandDiscoveryDelayMs: Long = 30_000L,
+    private val islandDiscoveryAnalysisIntervalMs: Long = ISLAND_DISCOVERY_ANALYSIS_INTERVAL_MS,
 ) {
     companion object {
         // The number of connections to proactively seek.
@@ -79,9 +81,9 @@ class TopologyOptimizer(
 
     private fun CoroutineScope.startIslandDiscoveryAnalysis() = launch {
         // Don't start island discovery immediately, let the network settle.
-        delay(30_000L)
+        delay(initialIslandDiscoveryDelayMs)
         while (true) {
-            delay(ISLAND_DISCOVERY_ANALYSIS_INTERVAL_MS)
+            delay(islandDiscoveryAnalysisIntervalMs)
             analyzeAndPerformIslandDiscovery()
         }
     }
