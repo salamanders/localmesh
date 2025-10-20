@@ -268,7 +268,9 @@ class LocalHttpServerTest {
 
         // Then
         assertEquals(HttpStatusCode.OK, response.status)
-        assertTrue(response.headers["Content-Type"]?.startsWith(ContentType.Text.CSS.toString()) ?: false)
+        assertTrue(
+            response.headers["Content-Type"]?.startsWith(ContentType.Text.CSS.toString()) ?: false
+        )
 
         client.close()
     }

@@ -11,12 +11,16 @@ import java.util.concurrent.ConcurrentHashMap
 
 // How often to share peer lists with neighbors.
 private const val GOSSIP_INTERVAL_MS = 30 * 1_000L
+
 // How often to check for opportunities to improve the network topology.
 private const val REWIRING_ANALYSIS_INTERVAL_MS = 1 * 60 * 1_000L
+
 // How often to check for opportunities to merge network islands.
 private const val ISLAND_DISCOVERY_ANALYSIS_INTERVAL_MS = 5 * 60 * 1_000L
+
 // How long to wait after a rewiring before attempting another.
 private const val REWIRING_COOLDOWN_MS = 1 * 60 * 1_000L
+
 // How long to remember a node's hop count before it's considered stale.
 private const val NODE_HOP_COUNT_EXPIRY_MS = 2 * 60 * 1_000L
 
@@ -41,14 +45,11 @@ private const val NODE_HOP_COUNT_EXPIRY_MS = 2 * 60 * 1_000L
  * ## Comparison to other classes
  * - **[ConnectionManager]:** This class is the "brains", while the `ConnectionManager` is the
  *   abstract "hands" that this class directs.
- * - **[BridgeService]:** This class is a component that is instantiated and managed by the
- *   `BridgeService` on Android.
  */
 class TopologyOptimizer(
     private val connectionManager: ConnectionManager,
     private val log: (String) -> Unit,
     private val endpointName: String,
-    private val islandDiscoveryAnalysisIntervalMs: Long = ISLAND_DISCOVERY_ANALYSIS_INTERVAL_MS,
     private val targetConnections: Int = TARGET_CONNECTIONS,
     private val gossipIntervalMs: Long = GOSSIP_INTERVAL_MS
 ) {
@@ -56,6 +57,7 @@ class TopologyOptimizer(
         // The number of connections to proactively seek.
         const val TARGET_CONNECTIONS = 4
     }
+
     private val neighborPeerLists = ConcurrentHashMap<String, List<String>>()
     private val nodeHopCounts =
         ConcurrentHashMap<String, Pair<Int, Long>>() // endpointId to (hopCount, timestamp)
@@ -88,7 +90,7 @@ class TopologyOptimizer(
         log("Analyzing network for potential islands.")
 
         val myPeers = connectionManager.connectedPeers.value
-        if (myPeers.size < TARGET_CONNECTIONS) {
+        if (myPeers.size < targetConnections) {
             log("Not enough connections to justify island discovery. Skipping.")
             return
         }
@@ -101,6 +103,7 @@ class TopologyOptimizer(
 
         log("Initiating island discovery: Dropping redundant peer '$redundantPeer' to search for new islands.")
         connectionManager.disconnectFrom(redundantPeer)
+        connectionManager.enterDiscoveryMode()
     }
 
     private fun CoroutineScope.listenForDiscoveredEndpoints() = launch {
@@ -151,49 +154,6 @@ class TopologyOptimizer(
         }
     }
 
-    private fun CoroutineScope.startIslandDiscoveryAnalysis() = launch {
-        while (true) {
-            delay(islandDiscoveryAnalysisIntervalMs)
-            analyzeAndPerformIslandDiscovery()
-        }
-    }
-
-    private fun findRedundantPeer(): String? {
-        val myPeers = connectionManager.connectedPeers.value
-        if (myPeers.size < 2) return null
-
-        for (peerA in myPeers) {
-            val peersOfPeerA = neighborPeerLists[peerA]?.toSet() ?: continue
-            for (peerB in myPeers) {
-                if (peerA != peerB && peersOfPeerA.contains(peerB)) {
-                    log("Found redundant connection: We are connected to $peerA and $peerB, and they are connected to each other.")
-                    return peerB
-                }
-            }
-        }
-        return null
-    }
-
-    private fun analyzeAndPerformIslandDiscovery() {
-        log("Analyzing network for potential islands.")
-
-        val myPeers = connectionManager.connectedPeers.value
-        if (myPeers.size < targetConnections) {
-            log("Not enough connections to justify island discovery. Skipping.")
-            return
-        }
-
-        val redundantPeer = findRedundantPeer()
-        if (redundantPeer == null) {
-            log("No redundant peer found to drop for island discovery. Skipping.")
-            return
-        }
-
-        log("Initiating island discovery: Dropping redundant peer '$redundantPeer' to search for new islands.")
-        connectionManager.disconnectFrom(redundantPeer)
-        connectionManager.enterDiscoveryMode()
-    }
-
 
     private fun analyzeAndPerformRewiring() {
         log("Analyzing network for rewiring opportunities.")
@@ -227,8 +187,8 @@ class TopologyOptimizer(
             return
         }
 
-        log("PERFORMING REWIRING: Dropping redundant peer $peerToDisconnect and connecting to distant node $mostDistantNodeId (hop count: ${mostDistantNodeEntry.value.first})")
-        connectionManager.disconnectFrom(peerToDisconnect)
+        log("PERFORMING REWIRING: Dropping redundant peer $redundantPeer and connecting to distant node $mostDistantNodeId (hop count: ${mostDistantNodeEntry.value.first})")
+        connectionManager.disconnectFrom(redundantPeer)
         connectionManager.connectTo(mostDistantNodeId)
         lastRewireTimestamp = System.currentTimeMillis()
     }
@@ -249,6 +209,7 @@ class TopologyOptimizer(
         }
         return null
     }
+
 
     private fun CoroutineScope.cleanupNodeHopCounts() = launch {
         while (true) {

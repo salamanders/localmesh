@@ -81,7 +81,7 @@ class CacheAndDisplayTest {
                 } catch (e: Exception) {
                     System.err.println("CacheAndDisplayTest: Connection attempt $i failed: ${e.message}")
                     if (i == 10) throw e // rethrow last exception
-                    kotlinx.coroutines.delay(200)
+                    delay(200)
                 }
             }
             client.close()

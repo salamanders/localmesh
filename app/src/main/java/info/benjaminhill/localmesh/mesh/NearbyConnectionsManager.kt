@@ -27,7 +27,6 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.Serializable
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.pow
@@ -49,7 +48,7 @@ import kotlin.math.pow
  * - It does not parse the content of `BYTES` payloads; it just passes them on.
  *
  * ## Comparison to other classes
- * - **[TopologyOptimizer]:** This class is the "hands", while `TopologyOptimizer` is the "brains".
+ * - ** This class is the "hands", while `TopologyOptimizer` is the "brains".
  * - **[BridgeService]:** This class is the workhorse for P2P communication, while `BridgeService` acts
  *   as the central orchestrator.
  */
@@ -262,7 +261,8 @@ class NearbyConnectionsManager(
 
             if (isDiscoveryModeActive) {
                 logger.log("In discovery mode, attempting to connect to new endpoint '$endpointId' to merge islands.")
-                isDiscoveryModeActive = false // Exit discovery mode immediately upon finding a candidate
+                isDiscoveryModeActive =
+                    false // Exit discovery mode immediately upon finding a candidate
                 discoveryModeJob?.cancel()
                 requestConnection(endpointId)
                 return

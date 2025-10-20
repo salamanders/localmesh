@@ -3,7 +3,6 @@ package info.benjaminhill.localmesh.logic
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Before
@@ -30,7 +29,6 @@ class IslandMergingTest {
                 connectionManager = manager,
                 log = { println("node$i: ${it.take(120)}") },
                 endpointName = "node$i",
-                islandDiscoveryAnalysisIntervalMs = 2000L, // Fast for testing
                 targetConnections = cliqueSize - 1,
                 gossipIntervalMs = 1000L // Fast for testing
             )

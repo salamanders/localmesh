@@ -29,7 +29,6 @@ class ScalabilityTest {
                     connectionManager = manager,
                     log = { println("node$i: ${it.take(120)}") },
                     endpointName = "node$i",
-                    islandDiscoveryAnalysisIntervalMs = 5000L,
                     targetConnections = 3,
                     gossipIntervalMs = 1000L // Fast for testing
                 )

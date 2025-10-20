@@ -7,8 +7,8 @@ import info.benjaminhill.localmesh.logic.NetworkMessage
 import info.benjaminhill.localmesh.util.AppLogger
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
-import kotlinx.serialization.json.Json
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
