@@ -57,7 +57,8 @@ class TopologyOptimizer(
 ) {
     companion object {
         // The number of connections to proactively seek.
-        const val TARGET_CONNECTIONS = 4
+        // Per P2P_DOCS.md, the practical limit for stable connections is 3-4.
+        const val TARGET_CONNECTIONS = 3
     }
 
     private val neighborPeerLists = ConcurrentHashMap<String, List<String>>()
