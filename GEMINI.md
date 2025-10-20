@@ -102,90 +102,53 @@ The system is composed of four main components:
 
 ### 3.1. General Data Flow (Request Broadcasting)
 
-This is the standard flow for a request originating from the local device that needs to be executed
-on all peers.
+This is the standard flow for a request originating from the local device that needs to be executed on all peers.
 
-1. A local web page sends an HTTP request to `http://localhost:8099` (e.g., `POST /chat`).
-2. The `p2pBroadcastInterceptor` in `LocalHttpServer` intercepts the request and sees it has no
-   `sourceNodeId` query parameter, marking it as a local-origin request.
-3. The interceptor serializes the request into an `HttpRequestWrapper` object.
-4. The `BridgeService.broadcast()` method wraps the `HttpRequestWrapper` in a standard
-   `NetworkMessage` (which includes a unique ID and hop count) and serializes it.
-5. The `BridgeService` calls `nearbyConnectionsManager.sendPayload()` to send the serialized
-   `NetworkMessage` to all connected peers.
-6. On a remote peer, `NearbyConnectionsManager` receives the `BYTES` payload and emits it onto the
-   `incomingPayloads` `SharedFlow`.
-7. The remote peer's `BridgeService` collects this flow, deserializes the `NetworkMessage` and
-   the `HttpRequestWrapper` inside it, and calls `localHttpServer.dispatchRequest()`.
-8. `dispatchRequest` uses an `HttpClient` to make a synthetic request to its *own* local server (
-   e.g., `http://localhost:8099/chat?sourceNodeId=...`), now including the `sourceNodeId`.
-9. The `p2pBroadcastInterceptor` on the peer sees the `sourceNodeId` and ignores the request,
-   preventing a broadcast loop. The request is then handled by the appropriate Ktor route.
+1.  A local web page sends an HTTP request to `http://localhost:8099` (e.g., `POST /chat`).
+2.  The `p2pBroadcastInterceptor` in [`LocalHttpServer.kt`](app/src/main/java/info/benjaminhill/localmesh/LocalHttpServer.kt) intercepts the request. Seeing no `sourceNodeId` query parameter, it marks it as a local-origin request.
+3.  The interceptor creates an [`HttpRequestWrapper`](mesh-logic/src/main/kotlin/info/benjaminhill/localmesh/logic/HttpRequestWrapper.kt).
+4.  The [`BridgeService.broadcast()`](app/src/main/java/info/benjaminhill/localmesh/mesh/BridgeService.kt) method wraps the `HttpRequestWrapper` in a [`NetworkMessage`](mesh-logic/src/main/kotlin/info/benjaminhill/localmesh/logic/NetworkMessage.kt).
+5.  `BridgeService` calls [`NearbyConnectionsManager.sendPayload()`](app/src/main/java/info/benjaminhill/localmesh/mesh/NearbyConnectionsManager.kt) to send the serialized `NetworkMessage` to all connected peers.
+6.  On a remote peer, `NearbyConnectionsManager` receives the `BYTES` payload and emits it onto the `incomingPayloads` `SharedFlow`.
+7.  The remote peer's `BridgeService` collects this flow, deserializes the message, and calls [`localHttpServer.dispatchRequest()`](app/src/main/java/info/benjaminhill/localmesh/LocalHttpServer.kt).
+8.  `dispatchRequest` uses an `HttpClient` to make a synthetic request to its *own* local server (e.g., `http://localhost:8099/chat?sourceNodeId=...`), now including the `sourceNodeId`.
+9.  The `p2pBroadcastInterceptor` on the peer sees the `sourceNodeId` and ignores the request, preventing a broadcast loop. The request is then handled by the appropriate Ktor route.
 
 ### 3.2. Detailed Flow: Remote Display
 
-This flow outlines how tapping a UI element on one device triggers a `WebView` to open on a peer
-device.
+This flow outlines how tapping a UI element on one device triggers a `WebView` to open on a peer device.
 
-1. **UI Interaction:** User taps a folder (e.g., "eye") in the web UI.
-2. **Local Request:** The UI sends a `GET /display?path=eye` request to the local server.
-3. **Intercept & Broadcast:** The `p2pBroadcastInterceptor` identifies `/display` as a
-   broadcast-only path, creates an `HttpRequestWrapper`, and calls `service.broadcast()`.
-4. **Stop Local Execution:** The interceptor immediately stops the request pipeline on the
-   originating device. This is key: the display command should only execute on remote peers.
-5. **Peer Reception:** A peer device receives the `NetworkMessage` via its
-   `NearbyConnectionsManager` and the `BridgeService` collects it from the flow.
-6. **Dispatch to Local Server:** The peer's `BridgeService` dispatches the wrapper to its own
-   `LocalHttpServer` as a synthetic request.
-7. **Execute on Peer:** The peer's server processes the `GET /display` request. The route handler
-   executes, starting a `DisplayActivity` on the peer device.
+1.  **UI Interaction:** User taps a folder (e.g., "eye") in the web UI.
+2.  **Local Request:** The UI sends a `GET /display?path=eye` request to the local server.
+3.  **Intercept & Broadcast:** The `p2pBroadcastInterceptor` in [`LocalHttpServer.kt`](app/src/main/java/info/benjaminhill/localmesh/LocalHttpServer.kt) identifies `/display` as a broadcast-only path, creates an `HttpRequestWrapper`, and calls `service.broadcast()`.
+4.  **Stop Local Execution:** The interceptor immediately stops the request pipeline on the originating device. This is key: the display command should only execute on remote peers.
+5.  **Peer Reception:** A peer device receives the `NetworkMessage` via its `NearbyConnectionsManager` and the `BridgeService` collects it from the flow.
+6.  **Dispatch to Local Server:** The peer's `BridgeService` dispatches the wrapper to its own `LocalHttpServer` as a synthetic request.
+7.  **Execute on Peer:** The peer's server processes the `GET /display` request. The route handler executes, starting a [`DisplayActivity`](app/src/main/java/info/benjaminhill/localmesh/display/DisplayActivity.kt) on the peer device.
 
 ### 3.3. Detailed Flow: File Transfer
 
-1. **UI Interaction:** User selects a file in the web UI.
-2. **Local Upload:** The UI sends a `multipart/form-data` POST to `http://localhost:8099/send-file`.
-3. **Save & Prepare:** The local server saves the file to a temp location and calls
-   `BridgeService.sendFile()`.
-4. **Broadcast Command & Stream:** The `BridgeService` does two things:
-    * Broadcasts a `NetworkMessage` containing an `HttpRequestWrapper` for `POST /send-file`.
-      This wrapper contains the `filename` and a unique `payloadId`.
-    * Sends the file content itself as a `Payload.Stream` to all peers.
-5. **Peer Receives Command:** The peer's `BridgeService` collects the `NetworkMessage` from the
-   `incomingPayloads` flow. It parses the `filename` and `payloadId` and stores them in a map
-   (`incomingFilePayloads`) to prepare for the stream.
-6. **Peer Receives Stream:** The `handleStreamPayload` method is triggered directly by the
-   `NearbyConnectionsManager`'s callback. It uses the `payload.id` to look up the `filename` from
-   the map and saves the incoming stream to its local cache.
+1.  **UI Interaction:** User selects a file in the web UI.
+2.  **Local Upload:** The UI sends a `multipart/form-data` POST to `http://localhost:8099/send-file`.
+3.  **Save & Prepare:** The local server saves the file to a temp location and calls [`BridgeService.sendFile()`](app/src/main/java/info/benjaminhill/localmesh/mesh/BridgeService.kt).
+4.  **Broadcast Command & Stream:** `BridgeService` does two things:
+    *   Broadcasts a `NetworkMessage` containing an `HttpRequestWrapper` for `POST /send-file`. This wrapper contains the `filename` and a unique `payloadId`.
+    *   Sends the file content itself as a `Payload.Stream` to all peers via `NearbyConnectionsManager`.
+5.  **Peer Receives Command:** The peer's `BridgeService` collects the `NetworkMessage` from the `incomingPayloads` flow. It parses the `filename` and `payloadId` and stores them in a map (`incomingFilePayloads`) to prepare for the stream.
+6.  **Peer Receives Stream:** The `handleStreamPayload` method in `BridgeService` is triggered directly by the `NearbyConnectionsManager`'s callback. It uses the `payload.id` to look up the `filename` from the map and saves the incoming stream to its local cache.
 
 ### 3.4. Detailed Flow: Topology Optimization
 
-This flow describes how the network self-optimizes its connections, driven by the `mesh-logic`
-module.
+This flow describes how the network self-optimizes its connections, driven by the `mesh-logic` module.
 
-1. **Payload Reception:** The Android `NearbyConnectionsManager` receives an incoming `BYTES`
-   payload from a peer. It does not parse it. It simply emits the raw `ByteArray` onto the
-   `incomingPayloads: SharedFlow<Pair<String, ByteArray>>`.
-2. **Optimizer Collection:** The `TopologyOptimizer` (in the `mesh-logic` module) is actively
-   collecting this `incomingPayloads` flow.
-3. **Message Parsing:** For each payload, the `TopologyOptimizer` deserializes it into a
-   `NetworkMessage`. It checks the message `type` to see if it's a data message or a
-   peer-list gossip message.
-4. **State Update:** Based on the message content, the optimizer updates its internal state:
-    * For data messages, it updates the `nodeHopCounts` map with the source node's ID and hop
-      count.
-    * For gossip messages, it updates the `neighborPeerLists` map with the peer's list of its
-      own neighbors.
-5. **Periodic Analysis:** Independently, a timer in `TopologyOptimizer` periodically runs the
-   `analyzeAndPerformRewiring()` method (e.g., every 60 seconds).
-6. **Rewiring Decision:** The analysis method inspects the `nodeHopCounts` and
-   `neighborPeerLists` to find opportunities for optimization (e.g., a redundant local "triangle"
-   connection and a known distant node).
-7. **Rewiring Action:** If an optimization is found, `TopologyOptimizer` calls methods on the
-   `ConnectionManager` interface it holds (e.g., `connectionManager.disconnectFrom(redundantPeer)`
-   and `connectionManager.connectTo(distantNode)`).
-8. **Execution:** The `NearbyConnectionsManager`, being the concrete implementation of the
-   `ConnectionManager`, receives these calls and executes them using the real Nearby Connections
-   API, thus changing the physical network topology.
+1.  **Payload Reception:** The Android [`NearbyConnectionsManager`](app/src/main/java/info/benjaminhill/localmesh/mesh/NearbyConnectionsManager.kt) receives an incoming `BYTES` payload and emits the raw `ByteArray` onto the `incomingPayloads: SharedFlow`.
+2.  **Optimizer Collection:** The [`TopologyOptimizer`](mesh-logic/src/main/kotlin/info/benjaminhill/localmesh/logic/TopologyOptimizer.kt) in the `mesh-logic` module collects this `incomingPayloads` flow.
+3.  **Message Parsing:** For each payload, `TopologyOptimizer` deserializes it into a `NetworkMessage` and inspects its content (e.g., data message with hop count, or gossip message with a peer list).
+4.  **State Update:** The optimizer updates its internal state maps (`nodeHopCounts`, `neighborPeerLists`).
+5.  **Periodic Analysis:** A timer in `TopologyOptimizer` periodically runs `analyzeAndPerformRewiring()`.
+6.  **Rewiring Decision:** The analysis method inspects the state maps to find an optimization opportunity (e.g., a redundant local "triangle" connection and a known distant node).
+7.  **Rewiring Action:** `TopologyOptimizer` calls methods on the [`ConnectionManager`](mesh-logic/src/main/kotlin/info/benjaminhill/localmesh/logic/ConnectionManager.kt) interface (e.g., `disconnectFrom(redundantPeer)` and `connectTo(distantNode)`).
+8.  **Execution:** `NearbyConnectionsManager`, being the concrete implementation of `ConnectionManager`, receives these calls and executes them using the Nearby Connections API, changing the physical network topology.
 
 ## 4. Technology Stack
 
@@ -214,19 +177,15 @@ required Android SDK components.
 
 ## 6. API Reference
 
-The Ktor server in `LocalHttpServer.kt` defines the following routes:
+The Ktor server in [`LocalHttpServer.kt`](app/src/main/java/info/benjaminhill/localmesh/LocalHttpServer.kt) defines the following routes:
 
-* `GET /folders`: Lists the available content folders in the `assets/web` directory.
-* `GET /status`: Retrieves the current service status, including the device's ID and a list of
-  connected peers.
-* `POST /chat`: Sends a chat message to all peers. Expects a URL-encoded body (e.g.,
-  `message=hello`).
-* `GET /display`: Triggers the `DisplayActivity` to open a specific path from the app's assets on
-  remote peers.
-* `POST /send-file`: Initiates a file transfer. This is a multipart endpoint called from the local
-  web UI.
-* `POST /file-received`: Internal notification endpoint to log when a file transfer is complete.
-* `GET /{path...}`: General-purpose route to serve static files from the `assets/web` directory.
+*   `GET /folders`: Lists the available content folders in the `assets/web` directory.
+*   `GET /status`: Retrieves the current service status as a JSON object, including the device's ID and a list of connected peers.
+*   `POST /chat`: Sends a chat message to all peers. Expects a URL-encoded body (e.g., `message=hello`). This is a broadcast-only endpoint.
+*   `GET /display`: Triggers the `DisplayActivity` to open a specific path from the app's assets on remote peers. Expects a `path` query parameter. This is a broadcast-only endpoint.
+*   `POST /send-file`: Initiates a file transfer. This is a multipart endpoint called from the local web UI. It is also called synthetically on peer devices to notify them of an incoming file stream.
+*   `POST /file-received`: Internal notification endpoint to log when a file transfer is complete.
+*   `GET /{path...}`: General-purpose route to serve static files from the `assets/web` directory.
 
 ## 7. Development Guidelines
 
