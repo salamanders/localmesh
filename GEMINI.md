@@ -336,6 +336,12 @@ mistakes. All strategies must be checked to avoid the following pitfalls:
   T'" or "Too many arguments". If binary serialization is required, consider using a `BinaryFormat`
   like `ProtoBuf` or explicitly converting to/from `String` for `Json`.
 
+<!--
+* **Not done until proven**: A feature, bug fix, or refactor is never done until we have **positive
+  proof** that it worked. This means extra compile/run/tests. That is **always** worth it. Never
+  say "Final Plan" or "Fixed Code" until you have proof.
+-->
+
 ## 10. Main Application Flows
 
 These are the primary user-facing flows in the application.

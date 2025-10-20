@@ -1,3 +1,0 @@
-* **Not done until proven**: A feature, bug fix, or refactor is never done until we have **positive
-  proof** that it worked. This means extra compile/run/tests. That is **always** worth it. Never
-  say "Final Plan" or "Fixed Code" until you have proof.
