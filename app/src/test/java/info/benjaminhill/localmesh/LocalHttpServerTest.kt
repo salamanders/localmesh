@@ -44,6 +44,7 @@ import java.io.File
 @RunWith(RobolectricTestRunner::class)
 class LocalHttpServerTest {
 
+    // JUnit rule to create a temporary folder for each test, ensuring cleanup.
     @get:Rule
     val tempFolder = TemporaryFolder()
 
@@ -236,6 +237,38 @@ class LocalHttpServerTest {
         assertTrue(folderList.contains("folder1"))
         assertTrue(folderList.contains("folder2"))
         assertEquals(2, folderList.size)
+
+        client.close()
+    }
+
+    @Test
+    fun `GET css file has correct content type`() = runBlocking {
+        // Given
+        val client = HttpClient(CIO)
+        val tempDir = tempFolder.newFolder()
+        val webCacheDir = File(tempDir, AssetManager.UNPACKED_FILES_DIR)
+        webCacheDir.mkdirs()
+        val eyeDir = File(webCacheDir, "eye")
+        eyeDir.mkdirs()
+        val cssFile = File(eyeDir, "icuween.css")
+        val fileContent = "body { background-color: #000; }"
+        cssFile.writeText(fileContent)
+
+        // Mock the context to return our temporary directory
+        val mockContext: Context = mock {
+            on { filesDir } doReturn tempDir
+        }
+        doReturn(mockContext).`when`(mockBridgeService).applicationContext
+
+        server = LocalHttpServer(mockBridgeService, mockLogger)
+        server.start()
+
+        // When
+        val response = client.get("http://localhost:${LocalHttpServer.PORT}/eye/icuween.css")
+
+        // Then
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(response.headers["Content-Type"]?.startsWith(ContentType.Text.CSS.toString()) ?: false)
 
         client.close()
     }

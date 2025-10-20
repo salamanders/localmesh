@@ -12,6 +12,7 @@ class ScalabilityTest {
 
     @Before
     fun setup() {
+        // Clear the singleton registry to ensure a clean state for each test.
         SimulationRegistry.clear()
     }
 
@@ -24,7 +25,14 @@ class ScalabilityTest {
         val nodes = (0 until numNodes).map { i ->
             val manager = SimulatedConnectionManager(coroutineScope)
             val optimizer =
-                TopologyOptimizer(manager, { println("node$i: ${it.take(120)}") }, "node$i")
+                TopologyOptimizer(
+                    connectionManager = manager,
+                    log = { println("node$i: ${it.take(120)}") },
+                    endpointName = "node$i",
+                    islandDiscoveryAnalysisIntervalMs = 5000L,
+                    targetConnections = 3,
+                    gossipIntervalMs = 1000L // Fast for testing
+                )
             manager.start()
             optimizer.start()
             // Stagger startups to prevent race conditions forming stable, disconnected cliques

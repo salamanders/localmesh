@@ -20,6 +20,8 @@ import info.benjaminhill.localmesh.logic.ConnectionManager
 import info.benjaminhill.localmesh.util.AppLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -29,9 +31,6 @@ import kotlinx.serialization.Serializable
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.pow
-
-private const val TARGET_CONNECTIONS = 3
-private const val MAX_CONNECTIONS = 4
 
 /**
  * The Android-specific implementation of the [ConnectionManager] interface.
@@ -58,7 +57,8 @@ class NearbyConnectionsManager(
     private val context: Context,
     private val endpointName: String,
     private val logger: AppLogger,
-    private val payloadReceivedCallback: (endpointId: String, payload: Payload) -> Unit
+    private val payloadReceivedCallback: (endpointId: String, payload: Payload) -> Unit,
+    override val maxConnections: Int,
 ) : ConnectionManager {
 
     override val connectedPeers = MutableStateFlow(emptySet<String>())
@@ -73,10 +73,14 @@ class NearbyConnectionsManager(
     private val retryCounts = mutableMapOf<String, Int>()
     private val seenMessageIds = ConcurrentHashMap<UUID, Long>()
 
+    private val scope = CoroutineScope(Dispatchers.IO)
+    private var isDiscoveryModeActive = false
+    private var discoveryModeJob: Job? = null
+
 
     override fun start() {
         logger.log("NearbyConnectionsManager.start()")
-        CoroutineScope(Dispatchers.IO).launch {
+        scope.launch {
             startAdvertising()
             startDiscovery()
         }
@@ -85,6 +89,7 @@ class NearbyConnectionsManager(
     override fun stop() {
         logger.log("NearbyConnectionsManager.stop()")
         connectionsClient.stopAllEndpoints()
+        scope.cancel()
         connectedPeers.value = emptySet()
         retryCounts.clear()
         seenMessageIds.clear()
@@ -111,8 +116,29 @@ class NearbyConnectionsManager(
         sendPayload(endpointIds, Payload.fromBytes(payload))
     }
 
+    override fun enterDiscoveryMode() {
+        if (isDiscoveryModeActive) {
+            logger.log("Already in discovery mode. Ignoring request.")
+            return
+        }
+        logger.log("Entering time-limited island discovery mode for 20 seconds.")
+        isDiscoveryModeActive = true
+
+        // Cancel any previous job to be safe
+        discoveryModeJob?.cancel()
+
+        discoveryModeJob = scope.launch {
+            delay(20_000L)
+            if (isDiscoveryModeActive) {
+                logger.log("Island discovery timeout reached. Exiting discovery mode.")
+                isDiscoveryModeActive = false
+            }
+        }
+    }
+
     private suspend fun startAdvertising() = logger.runCatchingWithLogging {
         withContext(Dispatchers.IO) {
+            // P2P_CLUSTER is a balanced strategy for a mesh network with multiple connections.
             val advertisingOptions =
                 AdvertisingOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).build()
             connectionsClient.startAdvertising(
@@ -130,6 +156,7 @@ class NearbyConnectionsManager(
 
     private suspend fun startDiscovery() = logger.runCatchingWithLogging {
         withContext(Dispatchers.IO) {
+            // P2P_CLUSTER is a balanced strategy for a mesh network with multiple connections.
             val discoveryOptions =
                 DiscoveryOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).build()
             connectionsClient.startDiscovery(
@@ -153,7 +180,7 @@ class NearbyConnectionsManager(
                     Payload.Type.BYTES -> {
                         val bytes = payload.asBytes()!!
                         logger.log("Emitting ${bytes.size} bytes from $endpointId to incomingPayloads flow.")
-                        CoroutineScope(Dispatchers.IO).launch {
+                        scope.launch {
                             incomingPayloads.emit(endpointId to bytes)
                         }
                     }
@@ -194,7 +221,7 @@ class NearbyConnectionsManager(
             override fun onConnectionInitiated(endpointId: String, connectionInfo: ConnectionInfo) {
                 logger.runCatchingWithLogging {
                     logger.log("onConnectionInitiated from ${connectionInfo.endpointName} (id:$endpointId)")
-                    if (connectedPeers.value.size < MAX_CONNECTIONS) {
+                    if (connectedPeers.value.size < maxConnections) {
                         logger.log("Accepting connection from $endpointId (current connections: ${connectedPeers.value.size})")
                         connectionsClient.acceptConnection(endpointId, payloadCallback)
                             .addOnFailureListener { e ->
@@ -232,7 +259,16 @@ class NearbyConnectionsManager(
             discoveredEndpointInfo: DiscoveredEndpointInfo
         ) {
             logger.log("onEndpointFound: ${discoveredEndpointInfo.endpointName} (id:$endpointId)")
-            CoroutineScope(Dispatchers.IO).launch {
+
+            if (isDiscoveryModeActive) {
+                logger.log("In discovery mode, attempting to connect to new endpoint '$endpointId' to merge islands.")
+                isDiscoveryModeActive = false // Exit discovery mode immediately upon finding a candidate
+                discoveryModeJob?.cancel()
+                requestConnection(endpointId)
+                return
+            }
+
+            scope.launch {
                 discoveredEndpoints.emit(endpointId)
             }
         }
@@ -275,7 +311,7 @@ class NearbyConnectionsManager(
             retryCounts[key] = nextRetry
             val backoffMillis = (1000 * 2.0.pow(currentRetries)).toLong() + (0..1000).random()
             logger.log("Scheduling retry for $description on '$key' in $backoffMillis ms (attempt $nextRetry)")
-            CoroutineScope(Dispatchers.IO).launch {
+            scope.launch {
                 delay(backoffMillis)
                 action()
             }

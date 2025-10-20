@@ -93,7 +93,8 @@ class BridgeService : Service() {
                     logger = logger,
                     payloadReceivedCallback = { _, payload ->
                         handleStreamPayload(payload)
-                    }
+                    },
+                    maxConnections = TopologyOptimizer.TARGET_CONNECTIONS + 1
                 )
             }
             if (!::topologyOptimizer.isInitialized) {
@@ -148,6 +149,7 @@ class BridgeService : Service() {
         }
     }
 
+    // Mechanism for UI to connect and interact with this service.
     inner class BridgeBinder : Binder() {
         fun getService(): BridgeService = this@BridgeService
     }
@@ -165,6 +167,7 @@ class BridgeService : Service() {
             ACTION_STOP -> stop()
             else -> logger.log("onStartCommand: Unknown action: ${intent?.action}")
         }
+        // If the OS kills the service, restart it, but don't re-deliver the last intent.
         return START_STICKY
     }
 
@@ -220,6 +223,7 @@ class BridgeService : Service() {
 
         createNotificationChannel()
         val notificationIntent = Intent(this, MainActivity::class.java)
+        // FLAG_IMMUTABLE is a security best practice.
         val pendingIntent =
             PendingIntent.getActivity(this, 0, notificationIntent, PendingIntent.FLAG_IMMUTABLE)
 
@@ -230,6 +234,8 @@ class BridgeService : Service() {
             .setContentIntent(pendingIntent)
             .build()
 
+        // Required for long-running network tasks on modern Android.
+        // The type hints to the OS that this service is for P2P connections.
         startForeground(1, notification, FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
         listenForIncomingData()
         nearbyConnectionsManager.start()
@@ -269,7 +275,9 @@ class BridgeService : Service() {
         topologyOptimizer.stop()
         nearbyConnectionsManager.stop()
         localHttpServer.stop()
+        // True to remove the notification, ensuring a clean stop.
         stopForeground(STOP_FOREGROUND_REMOVE)
+        // Request that the service be stopped.
         stopSelf()
 
         currentState = BridgeState.Idle
