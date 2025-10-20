@@ -13,7 +13,8 @@ import java.util.concurrent.ConcurrentHashMap
  * It uses a singleton [SimulationRegistry] to manage interactions between instances.
  */
 class SimulatedConnectionManager(
-    private val coroutineScope: CoroutineScope = CoroutineScope(Dispatchers.Default)
+    private val coroutineScope: CoroutineScope = CoroutineScope(Dispatchers.Default),
+    override val maxConnections: Int = 5
 ) : ConnectionManager {
 
     val id: String = UUID.randomUUID().toString()
@@ -64,9 +65,10 @@ class SimulatedConnectionManager(
     }
 
     internal fun handleConnectionRequest(requester: SimulatedConnectionManager) {
-        // For simulation, we'll just auto-accept. Real logic would check connection limits.
-        connectedPeers.value += requester.id
-        requester.confirmConnection(id)
+        if (connectedPeers.value.size < maxConnections) {
+            connectedPeers.value += requester.id
+            requester.confirmConnection(id)
+        }
     }
 
     internal fun confirmConnection(peerId: String) {

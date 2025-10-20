@@ -32,10 +32,6 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.pow
 
-// The absolute maximum connections before refusing new ones.
-// A higher MAX allows for temporary connections during network healing.
-private const val MAX_CONNECTIONS = 5
-
 /**
  * The Android-specific implementation of the [ConnectionManager] interface.
  *
@@ -61,7 +57,8 @@ class NearbyConnectionsManager(
     private val context: Context,
     private val endpointName: String,
     private val logger: AppLogger,
-    private val payloadReceivedCallback: (endpointId: String, payload: Payload) -> Unit
+    private val payloadReceivedCallback: (endpointId: String, payload: Payload) -> Unit,
+    override val maxConnections: Int,
 ) : ConnectionManager {
 
     override val connectedPeers = MutableStateFlow(emptySet<String>())
@@ -224,7 +221,7 @@ class NearbyConnectionsManager(
             override fun onConnectionInitiated(endpointId: String, connectionInfo: ConnectionInfo) {
                 logger.runCatchingWithLogging {
                     logger.log("onConnectionInitiated from ${connectionInfo.endpointName} (id:$endpointId)")
-                    if (connectedPeers.value.size < MAX_CONNECTIONS) {
+                    if (connectedPeers.value.size < maxConnections) {
                         logger.log("Accepting connection from $endpointId (current connections: ${connectedPeers.value.size})")
                         connectionsClient.acceptConnection(endpointId, payloadCallback)
                             .addOnFailureListener { e ->
