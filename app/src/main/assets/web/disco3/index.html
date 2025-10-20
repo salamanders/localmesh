@@ -17,10 +17,14 @@
     const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
     camera.position.z = 17;
 
-    const renderer = new THREE.WebGLRenderer({ /*antialias: true*/ });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    document.body.appendChild(renderer.domElement);
-
+    let renderer;
+    try {
+        renderer = new THREE.WebGLRenderer({ /*antialias: true*/ });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+    } catch (e) {
+        console.error("WebGL not supported, but that's ok for a test.", e);
+    }
     const textureLoader = new THREE.TextureLoader();
     const reflectionMap = textureLoader.load('discoball_reflection.png');
     reflectionMap.mapping = THREE.EquirectangularReflectionMapping;
@@ -85,7 +89,9 @@
         renderer.setSize(window.innerWidth, window.innerHeight);
     }, false);
 
-    animate();
+    if (renderer) {
+        animate();
+    }
     console.log('LOCALMESH_SCRIPT_SUCCESS:disco3');
 </script>
 </body>

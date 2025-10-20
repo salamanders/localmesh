@@ -27,4 +27,5 @@ dependencyResolutionManagement {
 rootProject.name = "LocalMesh"
 include(":app")
 include(":mesh-logic")
+include(":visualization-tester")
  
