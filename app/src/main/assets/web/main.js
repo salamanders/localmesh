@@ -79,8 +79,14 @@ async function fetchFolders() {
         const data = await response.json();
         const contentFolders = data.filter(item => !FOLDER_BLACKLIST.includes(item));
 
+        foldersList.innerHTML = ''; // Clear existing
         if (contentFolders.length > 0) {
-            foldersList.innerHTML = contentFolders.map(folder => `<li onclick="displayFolder('${folder}')">${folder}</li>`).join('');
+            contentFolders.forEach(folder => {
+                const li = document.createElement('li');
+                li.textContent = folder;
+                li.addEventListener('click', () => displayFolder(folder));
+                foldersList.appendChild(li);
+            });
         } else {
             foldersList.innerHTML = '<li>No content folders found in assets.</li>';
         }

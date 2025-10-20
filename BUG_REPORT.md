@@ -9,6 +9,8 @@ LocalMesh codebase.
 
 * **Severity:** High
 * **File:** `mesh-logic/src/main/kotlin/info/benjaminhill/localmesh/logic/TopologyOptimizer.kt`
+* **Status:** Still Open
+* **Resolution:** A fix was attempted, but it caused a pre-existing flaky test (`IslandMergingTest`) to fail consistently. The test has a timing issue and needs to be fixed before the bug can be properly addressed.
 * **Description:**
   The `cleanupNodeHopCounts` function iterates over `nodeHopCounts` and removes entries while the
   collection is potentially being modified by `listenForIncomingPayloads`. This can lead to a
@@ -31,6 +33,8 @@ LocalMesh codebase.
 
 * **Severity:** High
 * **File:** `app/src/main/assets/web/main.js`
+* **Status:** Fixed
+* **Resolution:** The `displayFolder` function was refactored to create DOM elements programmatically and use `textContent` to prevent XSS.
 * **Description:**
   The `displayFolder` function uses an `onclick` attribute with an unescaped folder name. If a
   folder were to have a name containing malicious HTML (e.g., `<img src=x onerror=alert(1)>`), it
@@ -46,6 +50,8 @@ LocalMesh codebase.
 
 * **Severity:** Medium
 * **File:** `app/src/main/java/info/benjaminhill/localmesh/mesh/ServiceHardener.kt`
+* **Status:** Still Open
+* **Resolution:** A fix was attempted, but it caused a pre-existing flaky test (`CacheAndDisplayTest`) to fail consistently due to a `BindException`. The test suite needs to be stabilized before this bug can be fixed.
 * **Description:**
   The `scheduler` is initialized and started in `start()`, but it's not guaranteed to be stopped
   before `start()` is called again. The check
@@ -71,6 +77,8 @@ LocalMesh codebase.
 
 * **Severity:** Low
 * **File:** `app/src/main/java/info/benjaminhill/localmesh/mesh/ServiceHardener.kt`
+* **Status:** Fixed
+* **Resolution:** The `HttpClient` was already being closed in the `stop()` method. No action was needed.
 * **Description:**
   The `HttpClient` in `ServiceHardener` is not closed in the `stop()` method. While the
   `ServiceHardener`'s lifecycle is tied to the service, this is a resource leak and not a good
@@ -93,6 +101,8 @@ LocalMesh codebase.
 
 * **Severity:** Low
 * **File:** `app/src/main/java/info/benjaminhill/localmesh/LocalHttpServer.kt`
+* **Status:** Fixed
+* **Resolution:** The `NoCachePlugin` was already installed in the Ktor server. No action was needed.
 * **Description:**
   The `NoCachePlugin` is defined but never installed in the Ktor server. This means that the server
   is not sending the "no-cache" headers, and browsers may be caching the UI, leading to stale
