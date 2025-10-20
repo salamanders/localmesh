@@ -184,6 +184,23 @@ class BridgeService : Service() {
         )
     }
 
+    /**
+     * Sends a file to all connected peers using a two-step process.
+     *
+     * 1.  A `BYTES` payload is broadcast containing the file's destination path and the ID of the
+     *     upcoming stream payload. This "primes" the receiving nodes to know the filename.
+     * 2.  The file content is sent as a `STREAM` payload.
+     *
+     * This approach is used over `Payload.File` for two main reasons:
+     * - **Robustness:** Project documentation (`P2P_DOCS.md`) notes that `Payload.File` can be
+     *   unreliable with the `P2P_CLUSTER` connection strategy.
+     * - **Simplicity:** The app bridges HTTP requests, which are stream-based. Using
+     *   `Payload.Stream` avoids the complexity of saving incoming HTTP data to a temporary file
+     *   before sending it over the P2P network.
+     *
+     * @param file The `File` object to send.
+     * @param destinationPath The relative path where the file should be saved on the receiving device.
+     */
     fun sendFile(file: File, destinationPath: String) {
         val streamPayload = Payload.fromStream(file.inputStream())
         val wrapper = HttpRequestWrapper(
