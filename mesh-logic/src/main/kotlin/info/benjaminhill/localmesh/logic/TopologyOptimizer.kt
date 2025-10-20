@@ -15,6 +15,8 @@ private const val TARGET_CONNECTIONS = 4
 private const val GOSSIP_INTERVAL_MS = 30_000L
 // How often to check for opportunities to improve the network topology.
 private const val REWIRING_ANALYSIS_INTERVAL_MS = 60_000L
+// How often to check for opportunities to merge network islands.
+private const val ISLAND_DISCOVERY_ANALYSIS_INTERVAL_MS = 10_000L // Production: 300_000L (5 minutes)
 // How long to wait after a rewiring before attempting another.
 private const val REWIRING_COOLDOWN_MS = 60_000L
 // How long to remember a node's hop count before it's considered stale.
@@ -64,8 +66,37 @@ class TopologyOptimizer(
             listenForIncomingPayloads()
             startGossip()
             startRewiringAnalysis()
+            startIslandDiscoveryAnalysis()
             cleanupNodeHopCounts()
         }
+    }
+
+    private fun CoroutineScope.startIslandDiscoveryAnalysis() = launch {
+        // Don't start island discovery immediately, let the network settle.
+        delay(30_000L)
+        while (true) {
+            delay(ISLAND_DISCOVERY_ANALYSIS_INTERVAL_MS)
+            analyzeAndPerformIslandDiscovery()
+        }
+    }
+
+    private fun analyzeAndPerformIslandDiscovery() {
+        log("Analyzing network for potential islands.")
+
+        val myPeers = connectionManager.connectedPeers.value
+        if (myPeers.size < TARGET_CONNECTIONS) {
+            log("Not enough connections to justify island discovery. Skipping.")
+            return
+        }
+
+        val redundantPeer = findRedundantPeer()
+        if (redundantPeer == null) {
+            log("No redundant peer found to drop for island discovery. Skipping.")
+            return
+        }
+
+        log("Initiating island discovery: Dropping redundant peer '$redundantPeer' to search for new islands.")
+        connectionManager.disconnectFrom(redundantPeer)
     }
 
     private fun CoroutineScope.listenForDiscoveredEndpoints() = launch {
@@ -131,20 +162,9 @@ class TopologyOptimizer(
         }
 
         // Find redundant local connections (triangles)
-        var redundantPeer: String? = null
-        for (peerA in myPeers) {
-            val peersOfPeerA = neighborPeerLists[peerA]?.toSet() ?: continue
-            for (peerB in myPeers) {
-                if (peerA != peerB && peersOfPeerA.contains(peerB)) {
-                    redundantPeer = peerB
-                    log("Found redundant connection: We are connected to $peerA and $peerB, and they are connected to each other.")
-                    break
-                }
-            }
-            if (redundantPeer != null) break
-        }
+        val peerToDisconnect = findRedundantPeer()
 
-        if (redundantPeer == null) {
+        if (peerToDisconnect == null) {
             log("No redundant local connections found.")
             return
         }
@@ -166,10 +186,27 @@ class TopologyOptimizer(
             return
         }
 
-        log("PERFORMING REWIRING: Dropping redundant peer $redundantPeer and connecting to distant node $mostDistantNodeId (hop count: ${mostDistantNodeEntry.value.first})")
-        connectionManager.disconnectFrom(redundantPeer)
+        log("PERFORMING REWIRING: Dropping redundant peer $peerToDisconnect and connecting to distant node $mostDistantNodeId (hop count: ${mostDistantNodeEntry.value.first})")
+        connectionManager.disconnectFrom(peerToDisconnect)
         connectionManager.connectTo(mostDistantNodeId)
         lastRewireTimestamp = System.currentTimeMillis()
+    }
+
+    private fun findRedundantPeer(): String? {
+        val myPeers = connectionManager.connectedPeers.value
+        if (myPeers.size < 2) {
+            return null
+        }
+        for (peerA in myPeers) {
+            val peersOfPeerA = neighborPeerLists[peerA]?.toSet() ?: continue
+            for (peerB in myPeers) {
+                if (peerA != peerB && peersOfPeerA.contains(peerB)) {
+                    log("Found redundant connection: We are connected to $peerA and $peerB, and they are connected to each other.")
+                    return peerB
+                }
+            }
+        }
+        return null
     }
 
     private fun CoroutineScope.cleanupNodeHopCounts() = launch {
