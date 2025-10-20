@@ -31,6 +31,10 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.pow
 
+// Durations for the advertising/discovery cycle, based on P2P_DOCS.md recommendations.
+private const val ADVERTISING_DURATION_MS = 5_000L
+private const val DISCOVERY_DURATION_MS = 10_000L
+
 /**
  * The Android-specific implementation of the [ConnectionManager] interface.
  *
@@ -68,6 +72,7 @@ class NearbyConnectionsManager(
         Nearby.getConnectionsClient(context)
     }
 
+    // TODO(jules): Per P2P_DOCS.md, use the application's package name for the serviceId.
     private val serviceId = "info.benjaminhill.localmesh.v1"
     private val retryCounts = mutableMapOf<String, Int>()
     private val seenMessageIds = ConcurrentHashMap<UUID, Long>()
@@ -80,8 +85,18 @@ class NearbyConnectionsManager(
     override fun start() {
         logger.log("NearbyConnectionsManager.start()")
         scope.launch {
-            startAdvertising()
-            startDiscovery()
+            // Per P2P_DOCS.md, simultaneous advertising/discovery can be unstable. Cycle between them.
+            launch {
+                while (true) {
+                    startAdvertising()
+                    delay(ADVERTISING_DURATION_MS)
+                    connectionsClient.stopAdvertising()
+
+                    startDiscovery()
+                    delay(DISCOVERY_DURATION_MS)
+                    connectionsClient.stopDiscovery()
+                }
+            }
         }
     }
 
@@ -135,38 +150,36 @@ class NearbyConnectionsManager(
         }
     }
 
-    private suspend fun startAdvertising() = logger.runCatchingWithLogging {
-        withContext(Dispatchers.IO) {
-            // P2P_CLUSTER is a balanced strategy for a mesh network with multiple connections.
-            val advertisingOptions =
-                AdvertisingOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).build()
-            connectionsClient.startAdvertising(
-                endpointName,
-                serviceId,
-                connectionLifecycleCallback,
-                advertisingOptions
-            ).addOnSuccessListener {
-                logger.log("Advertising started.")
-            }.addOnFailureListener { e ->
-                logger.e("Failed to start advertising", e)
-            }
+    private fun startAdvertising() = logger.runCatchingWithLogging {
+        // No longer a suspend fun because the Nearby API is listener-based and returns immediately.
+        // P2P_CLUSTER is a balanced strategy for a mesh network with multiple connections.
+        val advertisingOptions =
+            AdvertisingOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).build()
+        connectionsClient.startAdvertising(
+            endpointName,
+            serviceId,
+            connectionLifecycleCallback,
+            advertisingOptions
+        ).addOnSuccessListener {
+            logger.log("Advertising started.")
+        }.addOnFailureListener { e ->
+            logger.e("Failed to start advertising", e)
         }
     }
 
-    private suspend fun startDiscovery() = logger.runCatchingWithLogging {
-        withContext(Dispatchers.IO) {
-            // P2P_CLUSTER is a balanced strategy for a mesh network with multiple connections.
-            val discoveryOptions =
-                DiscoveryOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).build()
-            connectionsClient.startDiscovery(
-                serviceId,
-                endpointDiscoveryCallback,
-                discoveryOptions
-            ).addOnSuccessListener {
-                logger.log("Discovery started.")
-            }.addOnFailureListener { e ->
-                logger.e("Failed to start discovery", e)
-            }
+    private fun startDiscovery() = logger.runCatchingWithLogging {
+        // No longer a suspend fun because the Nearby API is listener-based and returns immediately.
+        // P2P_CLUSTER is a balanced strategy for a mesh network with multiple connections.
+        val discoveryOptions =
+            DiscoveryOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).build()
+        connectionsClient.startDiscovery(
+            serviceId,
+            endpointDiscoveryCallback,
+            discoveryOptions
+        ).addOnSuccessListener {
+            logger.log("Discovery started.")
+        }.addOnFailureListener { e ->
+            logger.e("Failed to start discovery", e)
         }
     }
 
