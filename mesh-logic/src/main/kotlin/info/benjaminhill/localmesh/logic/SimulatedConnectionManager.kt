@@ -83,6 +83,17 @@ class SimulatedConnectionManager(
             discoveredEndpoints.emit(peerId)
         }
     }
+
+    override fun enterDiscoveryMode() {
+        // Simulate finding all other peers in the network.
+        coroutineScope.launch {
+            SimulationRegistry.getPeers().forEach { peer ->
+                if (peer.id != this@SimulatedConnectionManager.id && peer.id !in connectedPeers.value) {
+                    discoveredEndpoints.emit(peer.id)
+                }
+            }
+        }
+    }
 }
 
 /**

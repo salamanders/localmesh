@@ -26,7 +26,14 @@ class IslandMergingTest {
         // Create nodes
         val nodes = (0 until numNodes).map { i ->
             val manager = SimulatedConnectionManager(coroutineScope)
-            val optimizer = TopologyOptimizer(manager, { println(it) }, "node$i")
+            val optimizer = TopologyOptimizer(
+                connectionManager = manager,
+                log = { println("node$i: ${it.take(120)}") },
+                endpointName = "node$i",
+                islandDiscoveryAnalysisIntervalMs = 2000L, // Fast for testing
+                targetConnections = cliqueSize - 1,
+                gossipIntervalMs = 1000L // Fast for testing
+            )
             manager to optimizer
         }
 
@@ -54,19 +61,9 @@ class IslandMergingTest {
             assertEquals(cliqueSize - 1, manager.connectedPeers.value.size)
         }
 
-        println("Two islands formed. Waiting for merge...")
+        println("Two islands formed. Waiting for auto-merge...")
 
-        // Now, we need a mechanism to bridge the islands.
-        // In a real scenario, this happens through discovery.
-        // Let's simulate one node from island1 discovering a node from island2
-        val nodeA = island1.first().first
-        val nodeB = island2.first().first
-
-        coroutineScope.launch {
-            nodeA.discoveredEndpoints.emit(nodeB.id)
-        }
-
-        // Wait for the optimizer to connect them and for the networks to merge
+        // Wait for the optimizer's island discovery logic to trigger and merge the networks
         delay(5000)
 
         // Verify that all nodes are now part of a single network

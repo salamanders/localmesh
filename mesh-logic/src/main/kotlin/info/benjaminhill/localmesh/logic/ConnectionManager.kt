@@ -45,4 +45,9 @@ interface ConnectionManager {
      * @param endpointId The ID of the endpoint to disconnect from.
      */
     fun disconnectFrom(endpointId: String)
+
+    /**
+     * Enters a special, time-limited discovery mode to find new network islands.
+     */
+    fun enterDiscoveryMode()
 }
