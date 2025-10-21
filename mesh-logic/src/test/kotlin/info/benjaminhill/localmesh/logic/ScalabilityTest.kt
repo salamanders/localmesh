@@ -6,7 +6,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertTrue
 import org.junit.Before
-import org.junit.Ignore
 import org.junit.Test
 
 class ScalabilityTest {
@@ -17,10 +16,6 @@ class ScalabilityTest {
         SimulationRegistry.clear()
     }
 
-    // TODO(jules): This test is ignored due to its reliance on timing-sensitive simulation.
-    // The formation of a fully connected graph can fail intermittently depending on the randomized
-    // delays, making it too flaky for reliable CI.
-    @Ignore("Test is flaky in simulation environment")
     @Test
     fun `test network scalability with 27 nodes`() = runBlocking {
         val numNodes = 27
@@ -34,7 +29,8 @@ class ScalabilityTest {
                     connectionManager = manager,
                     log = { println("node$i: ${it.take(120)}") },
                     endpointName = "node$i",
-                    targetConnections = 3
+                    targetConnections = 3,
+                    gossipIntervalMs = 1000L // Fast for testing
                 )
             manager.start()
             optimizer.start()
@@ -48,7 +44,7 @@ class ScalabilityTest {
         // Allow time for discovery and connection, with retries for stability
         var isolatedNodes = emptyList<SimulatedConnectionManager>()
         for (i in 1..5) {
-            delay(15000)
+            delay(5000)
             isolatedNodes = nodes.filter { it.connectedPeers.value.isEmpty() }
             if (isolatedNodes.isEmpty()) {
                 break

@@ -222,16 +222,115 @@ following routes:
 
 * **Prefer Fluent Configuration:** Use scope functions (`apply`, `also`) for object configuration to
   improve readability.
+  ```kotlin
+  // Prefer this fluent style
+  Intent(this, MyActivity::class.java).apply {
+      putExtra("key", "value")
+      action = "MY_ACTION"
+  }.also { startActivity(it) }
+  ```
 * **Use Explicit Data Fields:** When modeling data for transfer, prefer explicit fields over
-  combined ones that require special parsing.
-* **Search Before Refactoring:** Before refactoring a shared class, perform a global search to
-  identify all usages.
+  combined ones that require special parsing. This improves clarity and maintainability.
+* **Search Before Refactoring:** Before refactoring a shared class like `HttpRequestWrapper`,
+  perform a global search to identify all usages. This prevents build failures by ensuring all
+  dependent files are updated simultaneously.
 
 ## 8. Fully Automated End-to-End Testing
-[Instructions remain the same]
+
+### Test Workflow
+
+1. **Build and Grant Permissions:** Build a fresh debug APK. Then, install it using the `-g` flag,
+   which automatically grants all
+   permissions declared in the manifest. This is the critical first step to enabling a UI-less
+   startup.
+2. **Automated App Launch:** Use `adb` to start the `MainActivity`, passing the special `auto_start`
+   boolean extra. This flag
+   is the testing hook that tells the activity to bypass the "Start Service" button and immediately
+   trigger the service launch sequence. The app will briefly flash on screen and then proceed
+   directly to the main web UI, with the
+   `BridgeService` running in the background.
+3. **Forward the Device Port:** Forward the device's port to your local machine to enable `curl`
+   commands.
+4. **Trigger an Action via API:** Use `curl` to send commands to the app's local server. To test a
+   peer command, you must include a
+   `sourceNodeId`.
+5. **Monitor for Proof:** Check `logcat` for logs confirming the action was received and executed
+   correctly. Note: make
+   sure you aren't reading a previous run's logcat. Clear the logcat if necessary.
+6. **Clean Up:**
+   Remove the port forwarding rule when you are finished. If the issue is still being debugged, skip
+   this step.
+
+```bash
+./gradlew assembleDebug
+adb install -r -g app/build/outputs/apk/debug/app-debug.apk
+adb shell am start -n info.benjaminhill.localmesh/.MainActivity --ez auto_start true
+adb forward tcp:8099 tcp:8099
+# Example: Trigger the 'motion' display on the connected device
+curl -X GET "http://localhost:8099/display?path=motion&sourceNodeId=test-node"
+adb logcat -d DisplayActivity:I WebViewScreen:I *:S
+# adb forward --remove-all
+```
 
 ## 9. Automated Testing
-[Instructions remain the same]
+
+* Objective: Achieve a fully automated, end-to-end test script that can be executed by the
+  gemini-cli.
+* Initial Failures: Early attempts to start the BridgeService directly from adb were
+  unsuccessful due to Android security policies (service not exported, background start
+  restrictions).
+* Successful Refactoring: To solve this, a testing hook was added to MainActivity. It now
+  checks for a boolean auto_start Intent extra, which allows it to bypass the UI and trigger the
+  service start sequence automatically. This brings the app to the foreground correctly while
+  maintaining automation. **STILL NEEDS TO BE VERIFIED**
+* Process Improvement: A series of incorrect assumptions during the testing phase led to the
+  creation of a "Core Mandate: The 'Prove-It' Workflow," which has been added to this document to
+  enforce a stricter, evidence-based development cycle.
+* Current Status: We have identified what we think is the correct adb command (
+  `adb shell am start -ez auto_start true`) to trigger the testing hook. The next step is to execute
+  this command and verify that it successfully launches the app and service without manual
+  interaction, finally clearing the path for the full end-to-end test.
+
+### Additional Notes for Gemini
+
+* Don't be obsequious. The user's ideas aren't "wonderful" or "fantastic" or "brilliant". Don't use
+  phrases like "You are absolutely right." or "My apologies" At most say (if it is true) "I can
+  confirm that is a better plan."
+* **Document any reverts**: If you ever do something then revert it, this is valuable information
+  and should be written down in this file so future gemini-cli doesn't repeat the same mistake.
+* **Bias towards leaving in Logging statements**: If you add logging to a function, and get the
+  issue resolved, consider leaving the logging lines in, in case the issue comes back or isn't fully
+  resolved.
+* **Absence of errors is not proof of success.** The only proof of success is an affirmative logcat
+  message showing the expected behavior occurred.
+* **Utilize `adb` for control.** It is a reliable way to interact with the app.
+* **The process ID changes on every run.** Assume it has changed and filter logs accordingly.
+* **Utilize the User**: If you have to make 10+ search-and-replace, ask the user to do it rather
+  than eat up Gemini tokens. The same applies for any "easy to do with an IDE" bulk change.
+
+### Sticking Points
+
+Previous attempts by an automated agent failed due to the following. Do not repeat the same
+mistakes. All strategies must be checked to avoid the following pitfalls:
+
+* **GUESSING WITHOUT EVIDENCE**: Gemini has a bad habit of guessing and coding. Don't do this.
+  Instead, take smaller evidence-backed steps.
+* Misunderstanding the core broadcast-vs-local execution logic.
+* Incorrectly using file modification tools.
+* Misinterpreting logs and incorrectly announcing success.
+* Failing to follow a step-by-step verification process.
+* **KOTLINX.SERIALIZATION BINARY FORMATS**: Be aware that `kotlinx.serialization.json.Json` is a
+  `StringFormat`, not a `BinaryFormat`. Direct `encodeToByteArray` and `decodeFromByteArray`
+  functions are not available on `Json` without an intermediate `String` conversion. Attempting to
+  use them directly will result in compilation errors like "Cannot infer type for type parameter '
+  T'" or "Too many arguments". If binary serialization is required, consider using a `BinaryFormat`
+  like `ProtoBuf` or explicitly converting to/from `String` for `Json`.
+
+<!--
+* **Not done until proven**: A feature, bug fix, or refactor is never done until we have **positive
+  proof** that it worked. This means extra compile/run/tests. That is **always** worth it. Never
+  say "Final Plan" or "Fixed Code" until you have proof.
+-->
 
 ## 10. Main Application Flows
 

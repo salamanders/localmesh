@@ -13,23 +13,26 @@ import android.os.Binder
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import com.google.android.gms.nearby.connection.Payload
 import info.benjaminhill.localmesh.LocalHttpServer
 import info.benjaminhill.localmesh.MainActivity
 import info.benjaminhill.localmesh.R
-import info.benjaminhill.localmesh.logic.FileChunk
 import info.benjaminhill.localmesh.logic.HttpRequestWrapper
 import info.benjaminhill.localmesh.logic.NetworkMessage
 import info.benjaminhill.localmesh.logic.TopologyOptimizer
 import info.benjaminhill.localmesh.util.AppLogger
+import info.benjaminhill.localmesh.util.AssetManager
 import info.benjaminhill.localmesh.util.LogFileWriter
 import info.benjaminhill.localmesh.util.PermissionUtils
-import kotlinx.coroutines.*
+import io.ktor.http.parseUrlEncodedParameters
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
-
-private const val CHUNK_SIZE = 16 * 1024 // 16KB
 
 /**
  * Orchestrates the entire application, acting as the central hub for all components.
@@ -54,7 +57,6 @@ class BridgeService : Service() {
     internal lateinit var localHttpServer: LocalHttpServer
     internal lateinit var serviceHardener: ServiceHardener
     internal lateinit var topologyOptimizer: TopologyOptimizer
-    internal lateinit var fileReassemblyManager: FileReassemblyManager
     private lateinit var logger: AppLogger
 
     lateinit var endpointName: String
@@ -63,32 +65,45 @@ class BridgeService : Service() {
     @Volatile
     var serviceStartTime = 0L
 
+    internal val incomingFilePayloads = ConcurrentHashMap<Long, String>()
     internal var ioDispatcher: CoroutineDispatcher = Dispatchers.IO
-    private val serviceScope by lazy { CoroutineScope(ioDispatcher + SupervisorJob()) }
-    private val seenMessageIds = ConcurrentHashMap<String, Long>()
 
     override fun onCreate() {
         super.onCreate()
         Log.i(TAG, "BridgeService.onCreate() called")
-        logger = AppLogger(TAG, LogFileWriter(applicationContext))
-        logger.runCatchingWithLogging {
-            endpointName = (('A'..'Z') + ('a'..'z') + ('0'..'9')).shuffled().take(5).joinToString("")
-            logger.log("This node is now named: $endpointName")
 
-            serviceHardener = ServiceHardener(this, logger)
-            localHttpServer = LocalHttpServer(this, logger)
-            fileReassemblyManager = FileReassemblyManager(applicationContext, logger)
-            nearbyConnectionsManager = NearbyConnectionsManager(
-                context = this,
-                endpointName = endpointName,
-                logger = logger,
-                maxConnections = TopologyOptimizer.TARGET_CONNECTIONS + 1
-            )
-            topologyOptimizer = TopologyOptimizer(
-                connectionManager = nearbyConnectionsManager,
-                log = { msg: String -> logger.log(msg) },
-                endpointName = endpointName
-            )
+        logger = AppLogger(TAG, LogFileWriter(applicationContext))
+
+        logger.runCatchingWithLogging {
+            (('A'..'Z') + ('a'..'z') + ('0'..'9')).shuffled().take(5).joinToString("").also {
+                endpointName = it
+                logger.log("This node is now named: $it")
+            }
+
+            if (!::serviceHardener.isInitialized) {
+                serviceHardener = ServiceHardener(this, logger)
+            }
+            if (!::localHttpServer.isInitialized) {
+                localHttpServer = LocalHttpServer(this, logger)
+            }
+            if (!::nearbyConnectionsManager.isInitialized) {
+                nearbyConnectionsManager = NearbyConnectionsManager(
+                    context = this,
+                    endpointName = endpointName,
+                    logger = logger,
+                    payloadReceivedCallback = { _, payload ->
+                        handleStreamPayload(payload)
+                    },
+                    maxConnections = TopologyOptimizer.TARGET_CONNECTIONS + 1
+                )
+            }
+            if (!::topologyOptimizer.isInitialized) {
+                topologyOptimizer = TopologyOptimizer(
+                    connectionManager = nearbyConnectionsManager,
+                    log = { msg: String -> logger.log(msg) },
+                    endpointName = endpointName
+                )
+            }
             logger.log("onCreate() finished successfully")
         } ?: run {
             logger.e("FATAL: Service crashed on create.")
@@ -96,46 +111,72 @@ class BridgeService : Service() {
         }
     }
 
-    internal fun handleIncomingData(fromEndpointId: String, data: ByteArray) {
+    internal fun handleIncomingData(data: ByteArray) {
         serviceHardener.updateP2pMessageTime()
         logger.runCatchingWithLogging {
-            val networkMessage = Json.decodeFromString<NetworkMessage>(data.toString(Charsets.UTF_8))
-            if (seenMessageIds.containsKey(networkMessage.messageId)) {
-                return@runCatchingWithLogging
-            }
-            seenMessageIds[networkMessage.messageId] = System.currentTimeMillis()
+            val jsonString = data.toString(Charsets.UTF_8)
+            val networkMessage = Json.decodeFromString<NetworkMessage>(jsonString)
 
-            serviceScope.launch {
-                networkMessage.httpRequest?.let { localHttpServer.dispatchRequest(it) }
-                networkMessage.fileChunk?.let { fileReassemblyManager.handleFileChunk(it) }
-            }
+            networkMessage.httpRequest?.let { wrapper ->
+                if (wrapper.path == "/send-file") {
+                    val params = wrapper.queryParams.parseUrlEncodedParameters()
+                    val filename = params["filename"]
+                    val payloadId = params["payloadId"]?.toLongOrNull()
+                    if (filename != null && payloadId != null) {
+                        incomingFilePayloads[payloadId] = filename
+                        logger.log("Expecting file '$filename' for payload $payloadId")
+                    }
+                }
 
-            val forwardPeers = nearbyConnectionsManager.connectedPeers.value.filter { it != fromEndpointId }
-            if (forwardPeers.isNotEmpty()) {
-                val forwardedMessage = networkMessage.copy(hopCount = networkMessage.hopCount + 1)
-                val payload = Json.encodeToString(forwardedMessage).toByteArray(Charsets.UTF_8)
-                nearbyConnectionsManager.sendPayload(forwardPeers, payload)
+                CoroutineScope(ioDispatcher).launch {
+                    localHttpServer.dispatchRequest(wrapper)
+                }
             }
         }
     }
 
+    internal fun handleStreamPayload(payload: Payload) {
+        val filename = incomingFilePayloads.remove(payload.id)
+        if (filename == null) {
+            logger.e("Received stream payload with unknown ID: ${payload.id}")
+            return
+        }
+        logger.runCatchingWithLogging {
+            payload.asStream()?.asInputStream()?.use { inputStream ->
+                AssetManager.saveFile(applicationContext, filename, inputStream)
+            }
+            logger.log("File received and saved: $filename")
+        }
+    }
+
+    // Mechanism for UI to connect and interact with this service.
     inner class BridgeBinder : Binder() {
         fun getService(): BridgeService = this@BridgeService
     }
 
     private val binder = BridgeBinder()
-    override fun onBind(intent: Intent): IBinder = binder
+
+    override fun onBind(intent: Intent): IBinder {
+        return binder
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        logger.log("BridgeService: onStartCommand() called with action: ${intent?.action}")
         when (intent?.action) {
             ACTION_START -> start()
             ACTION_STOP -> stop()
+            else -> logger.log("onStartCommand: Unknown action: ${intent?.action}")
         }
+        // If the OS kills the service, restart it, but don't re-deliver the last intent.
         return START_STICKY
     }
 
     fun broadcast(wrapper: HttpRequestWrapper) {
-        val networkMessage = NetworkMessage(httpRequest = wrapper)
+        val networkMessage = NetworkMessage(
+            hopCount = 0,
+            messageId = UUID.randomUUID().toString(),
+            httpRequest = wrapper
+        )
         val payload = Json.encodeToString(networkMessage).toByteArray(Charsets.UTF_8)
         nearbyConnectionsManager.sendPayload(
             nearbyConnectionsManager.connectedPeers.value.toList(),
@@ -143,53 +184,66 @@ class BridgeService : Service() {
         )
     }
 
+    /**
+     * Sends a file to all connected peers using a two-step process.
+     *
+     * 1.  A `BYTES` payload is broadcast containing the file's destination path and the ID of the
+     *     upcoming stream payload. This "primes" the receiving nodes to know the filename.
+     * 2.  The file content is sent as a `STREAM` payload.
+     *
+     * This approach is used over `Payload.File` for two main reasons:
+     * - **Robustness:** Project documentation (`P2P_DOCS.md`) notes that `Payload.File` can be
+     *   unreliable with the `P2P_CLUSTER` connection strategy.
+     * - **Simplicity:** The app bridges HTTP requests, which are stream-based. Using
+     *   `Payload.Stream` avoids the complexity of saving incoming HTTP data to a temporary file
+     *   before sending it over the P2P network.
+     *
+     * @param file The `File` object to send.
+     * @param destinationPath The relative path where the file should be saved on the receiving device.
+     */
     fun sendFile(file: File, destinationPath: String) {
-        serviceScope.launch {
-            logger.runCatchingWithLogging {
-                val fileId = UUID.randomUUID().toString()
-                val fileBytes = file.readBytes()
-                val totalChunks = (fileBytes.size + CHUNK_SIZE - 1) / CHUNK_SIZE
-
-                for (i in 0 until totalChunks) {
-                    val start = i * CHUNK_SIZE
-                    val end = minOf((i + 1) * CHUNK_SIZE, fileBytes.size)
-                    val chunkData = fileBytes.sliceArray(start until end)
-
-                    val fileChunk = FileChunk(
-                        fileId = fileId,
-                        destinationPath = destinationPath,
-                        chunkIndex = i,
-                        totalChunks = totalChunks,
-                        data = chunkData
-                    )
-                    val networkMessage = NetworkMessage(fileChunk = fileChunk)
-                    val payload = Json.encodeToString(networkMessage).toByteArray(Charsets.UTF_8)
-                    nearbyConnectionsManager.sendPayload(
-                        nearbyConnectionsManager.connectedPeers.value.toList(),
-                        payload
-                    )
-                }
-            }
-        }
+        val streamPayload = Payload.fromStream(file.inputStream())
+        val wrapper = HttpRequestWrapper(
+            method = "POST",
+            path = "/send-file",
+            queryParams = "filename=$destinationPath&payloadId=${streamPayload.id}",
+            body = "",
+            sourceNodeId = endpointName
+        )
+        broadcast(wrapper)
+        nearbyConnectionsManager.sendPayload(
+            nearbyConnectionsManager.connectedPeers.value.toList(),
+            streamPayload
+        )
     }
 
     private fun start() {
-        if (currentState !is BridgeState.Idle) return
+        logger.log("BridgeService.start()")
+        if (currentState !is BridgeState.Idle) {
+            logger.log("Service is not idle, cannot start. Current state: ${currentState::class.java.simpleName}")
+            return
+        }
         currentState = BridgeState.Starting
         serviceStartTime = System.currentTimeMillis()
 
         if (!localHttpServer.start()) {
+            logger.e("FATAL: LocalHttpServer failed to start.")
             currentState = BridgeState.Error("HTTP server failed to start.")
             stopSelf()
             return
         }
+
         if (!checkHardwareAndPermissions()) {
             currentState = BridgeState.Error("Hardware or permissions not met.")
             return
         }
 
         createNotificationChannel()
-        val pendingIntent = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
+        val notificationIntent = Intent(this, MainActivity::class.java)
+        // FLAG_IMMUTABLE is a security best practice.
+        val pendingIntent =
+            PendingIntent.getActivity(this, 0, notificationIntent, PendingIntent.FLAG_IMMUTABLE)
+
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("P2P Web Bridge")
             .setContentText("Running...")
@@ -197,59 +251,78 @@ class BridgeService : Service() {
             .setContentIntent(pendingIntent)
             .build()
 
+        // Required for long-running network tasks on modern Android.
+        // The type hints to the OS that this service is for P2P connections.
         startForeground(1, notification, FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
         listenForIncomingData()
-        fileReassemblyManager.start()
         nearbyConnectionsManager.start()
         topologyOptimizer.start()
         serviceHardener.start()
         currentState = BridgeState.Running
+        logger.log("Service started and running.")
     }
 
     private fun checkHardwareAndPermissions(): Boolean {
-        (getSystemService(BLUETOOTH_SERVICE) as BluetoothManager).adapter ?: return false
-        (getSystemService(WIFI_SERVICE) as WifiManager).isWifiEnabled.let { if (!it) return false }
-        return PermissionUtils.getDangerousPermissions(this).all {
-            checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED
+        val bluetoothManager = getSystemService(BLUETOOTH_SERVICE) as BluetoothManager
+        if (bluetoothManager.adapter == null || !bluetoothManager.adapter.isEnabled) {
+            logger.e("Bluetooth is not enabled")
+            return false
+        }
+
+        val wifiManager = getSystemService(WIFI_SERVICE) as WifiManager
+        if (!wifiManager.isWifiEnabled) {
+            logger.e("Wi-Fi is not enabled")
+            return false
+        }
+
+        return PermissionUtils.getDangerousPermissions(this).all { permission ->
+            (checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED).also {
+                if (!it) {
+                    logger.e("Permission not granted: $permission")
+                }
+            }
         }
     }
 
-    internal fun stop() {
+    private fun stop() {
+        logger.log("BridgeService.stop()")
         currentState = BridgeState.Stopping
+
         serviceHardener.stop()
         topologyOptimizer.stop()
         nearbyConnectionsManager.stop()
-        fileReassemblyManager.stop()
         localHttpServer.stop()
-        serviceScope.cancel()
+        // True to remove the notification, ensuring a clean stop.
         stopForeground(STOP_FOREGROUND_REMOVE)
+        // Request that the service be stopped.
         stopSelf()
-        currentState = BridgeState.Idle
-    }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        stop()
+        currentState = BridgeState.Idle
+        logger.log("Service stopped.")
     }
 
     private fun listenForIncomingData() {
-        serviceScope.launch {
+        CoroutineScope(ioDispatcher).launch {
             nearbyConnectionsManager.incomingPayloads.collect { (endpointId, data) ->
-                handleIncomingData(endpointId, data)
+                logger.log("Collected ${data.size} bytes from $endpointId from flow.")
+                handleIncomingData(data)
             }
         }
     }
 
     fun restart() {
+        logger.log("Restarting BridgeService...")
         stop()
-        // A small delay to allow resources to be released.
-        runBlocking { delay(500) }
         start()
     }
 
     private fun createNotificationChannel() {
-        val channel = NotificationChannel(CHANNEL_ID, "P2P Bridge Service Channel", NotificationManager.IMPORTANCE_DEFAULT)
-        getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+        val serviceChannel = NotificationChannel(
+            CHANNEL_ID,
+            "P2P Bridge Service Channel",
+            NotificationManager.IMPORTANCE_DEFAULT
+        )
+        getSystemService(NotificationManager::class.java).createNotificationChannel(serviceChannel)
     }
 
     companion object {

@@ -1,22 +1,24 @@
 package info.benjaminhill.localmesh.logic
 
 import kotlinx.serialization.Serializable
-import java.util.UUID
 
+/**
+ * The standard wrapper for all messages sent across the mesh network.
+ * This enables network-wide behaviors like duplicate detection and hop counting.
+ */
 @Serializable
-data class FileChunk(
-    val fileId: String,      // Unique ID for the entire file transfer
-    val destinationPath: String, // Where to save the reassembled file
-    val chunkIndex: Int,
-    val totalChunks: Int,
-    @Serializable(with = ByteArraySerializer::class)
-    val data: ByteArray      // Note: Requires special handling for ByteArray serialization
+data class NetworkMessage(
+    /** The number of hops this message has taken. */
+    val hopCount: Byte,
+    /** A unique identifier for this message to prevent broadcast loops. */
+    val messageId: String, // UUID as string
+    /** The HTTP request payload, if this is an HTTP message. */
+    val httpRequest: HttpRequestWrapper? = null,
+    /** The gossip payload, if this is a gossip message. */
+    val gossip: Gossip? = null
 )
 
 @Serializable
-data class NetworkMessage(
-    val messageId: String = UUID.randomUUID().toString(),
-    val hopCount: Int = 0,
-    val httpRequest: HttpRequestWrapper? = null,
-    val fileChunk: FileChunk? = null
+data class Gossip(
+    val peerList: List<String>
 )
