@@ -42,7 +42,7 @@ the confirmed root cause before proposing the fix.
 
 1. [Core Concept: The P2P Web Bridge](#1-core-concept-the-p2p-web-bridge)
 2. [System Architecture](#2-system-architecture)
-3. [Data & Message Flows](#3-data--message-flows)
+3. [Communication Protocol: Unified Gossip](#3-communication-protocol-unified-gossip)
 4. [Technology Stack](#4-technology-stack)
 5. [Build & Run Instructions](#5-build--run-instructions)
 6. [API Reference](#6-api-reference)
@@ -74,9 +74,8 @@ The system is composed of four main components:
       peer-to-peer connections (e.g., `connectTo`, `disconnectFrom`, `sendPayload`) and exposes
       Kotlin Flows for events like `discoveredEndpoints` and `incomingPayloads`.
     * `TopologyOptimizer`: The "brains" of the network. It consumes a `ConnectionManager`
-      implementation and contains all the logic for analyzing network health, gossiping with
-      peers, and making high-level decisions to optimize the network topology by instructing the
-      `ConnectionManager` to rewire connections.
+      implementation and contains all the logic for analyzing network health, and making high-level
+      decisions to optimize the network topology by instructing the `ConnectionManager` to rewire connections.
     * `SimulatedConnectionManager`: An in-memory implementation of the `ConnectionManager`
       interface, used for running unit and integration tests of the `TopologyOptimizer` on a
       standard JVM without needing Android devices.
@@ -84,7 +83,8 @@ The system is composed of four main components:
 * **LocalMesh Android App (Middleware):** The native Android application that provides the
   Android-specific implementations and UI.
     * `BridgeService`: A foreground `Service` that orchestrates all the components. It
-      initializes the `TopologyOptimizer` and provides it with the `NearbyConnectionsManager`.
+      initializes the `TopologyOptimizer` and provides it with the `NearbyConnectionsManager`. It is
+      the heart of the gossip protocol.
     * `NearbyConnectionsManager`: The Android-specific implementation of the `ConnectionManager`
       interface. It acts as the "hands" of the network, wrapping the Google Play Services
       Nearby Connections API and translating the `TopologyOptimizer`'s commands into actual
@@ -92,109 +92,91 @@ The system is composed of four main components:
       other components to consume.
     * `LocalHttpServer`: A Ktor-based HTTP server that serves the web UI and provides an API for
       the frontend to interact with the system.
+    * `FileReassemblyManager`: A new manager class that handles incoming file chunks, reassembles
+      them, and saves them to disk.
     * `MainActivity` & `DisplayActivity`: The Android activities for launching the service and
       hosting the `WebView`.
     * `ServiceHardener`: A watchdog that monitors the health of the application.
 
 * **Peers:** Other Android devices on the same local network running the LocalMesh app.
 
-## 3. Data & Message Flows
+## 3. Communication Protocol: Unified Gossip
 
-### 3.1. General Data Flow (Request Broadcasting)
+All messages (chat, display commands) and file transfers must propagate to all nodes in the
+connected network graph. The mechanism to achieve this is a standardized, loop-free, and robust
+gossip protocol.
 
-This is the standard flow for a request originating from the local device that needs to be executed
-on all peers.
+### 3.1. The Core Concept
 
-1. A local web page sends an HTTP request to `http://localhost:8099` (e.g., `POST /chat`).
-2. The `p2pBroadcastInterceptor` in [
-   `LocalHttpServer.kt`](app/src/main/java/info/benjaminhill/localmesh/LocalHttpServer.kt)
-   intercepts the request. Seeing no `sourceNodeId` query parameter, it marks it as a local-origin
-   request.
-3. The interceptor creates an [
-   `HttpRequestWrapper`](mesh-logic/src/main/kotlin/info/benjaminhill/localmesh/logic/HttpRequestWrapper.kt).
-4. The [
-   `BridgeService.broadcast()`](app/src/main/java/info/benjaminhill/localmesh/mesh/BridgeService.kt)
-   method wraps the `HttpRequestWrapper` in a [
-   `NetworkMessage`](mesh-logic/src/main/kotlin/info/benjaminhill/localmesh/logic/NetworkMessage.kt).
-5. `BridgeService` calls [
-   `NearbyConnectionsManager.sendPayload()`](app/src/main/java/info/benjaminhill/localmesh/mesh/NearbyConnectionsManager.kt)
-   to send the serialized `NetworkMessage` to all connected peers.
-6. On a remote peer, `NearbyConnectionsManager` receives the `BYTES` payload and emits it onto the
-   `incomingPayloads` `SharedFlow`.
-7. The remote peer's `BridgeService` collects this flow, deserializes the message, and calls [
-   `localHttpServer.dispatchRequest()`](app/src/main/java/info/benjaminhill/localmesh/LocalHttpServer.kt).
-8. `dispatchRequest` uses an `HttpClient` to make a synthetic request to its *own* local server (
-   e.g., `http://localhost:8099/chat?sourceNodeId=...`), now including the `sourceNodeId`.
-9. The `p2pBroadcastInterceptor` on the peer sees the `sourceNodeId` and ignores the request,
-   preventing a broadcast loop. The request is then handled by the appropriate Ktor route.
+The solution is to treat **all** data—commands and file data alike—as a standard `NetworkMessage`
+that propagates through the mesh via a single, unified gossip protocol. This provides a robust and
+standardized transport layer for any type of application data, rather than having separate logic for
+different data types.
 
-### 3.2. Detailed Flow: Remote Display
+The `NetworkMessage` in `mesh-logic` is updated to optionally include file chunk data.
 
-This flow outlines how tapping a UI element on one device triggers a `WebView` to open on a peer
-device.
+```kotlin
+// In: mesh-logic/src/main/kotlin/info/benjaminhill/localmesh/logic/NetworkMessage.kt
+@Serializable
+data class FileChunk(
+    val fileId: String,      // Unique ID for the entire file transfer
+    val destinationPath: String, // Where to save the reassembled file
+    val chunkIndex: Int,
+    val totalChunks: Int,
+    val data: ByteArray      // Note: Requires special handling for ByteArray serialization
+)
 
-1. **UI Interaction:** User taps a folder (e.g., "eye") in the web UI.
-2. **Local Request:** The UI sends a `GET /display?path=eye` request to the local server.
-3. **Intercept & Broadcast:** The `p2pBroadcastInterceptor` in [
-   `LocalHttpServer.kt`](app/src/main/java/info/benjaminhill/localmesh/LocalHttpServer.kt)
-   identifies `/display` as a broadcast-only path, creates an `HttpRequestWrapper`, and calls
-   `service.broadcast()`.
-4. **Stop Local Execution:** The interceptor immediately stops the request pipeline on the
-   originating device. This is key: the display command should only execute on remote peers.
-5. **Peer Reception:** A peer device receives the `NetworkMessage` via its
-   `NearbyConnectionsManager` and the `BridgeService` collects it from the flow.
-6. **Dispatch to Local Server:** The peer's `BridgeService` dispatches the wrapper to its own
-   `LocalHttpServer` as a synthetic request.
-7. **Execute on Peer:** The peer's server processes the `GET /display` request. The route handler
-   executes, starting a [
-   `DisplayActivity`](app/src/main/java/info/benjaminhill/localmesh/display/DisplayActivity.kt) on
-   the peer device.
+@Serializable
+data class NetworkMessage(
+    val messageId: String = UUID.randomUUID().toString(),
+    val hopCount: Int = 0,
+    val httpRequest: HttpRequestWrapper? = null,
+    val fileChunk: FileChunk? = null
+)
+```
 
-### 3.3. Detailed Flow: File Transfer
+### 3.2. The Gossip & Loop-Prevention Mechanism: "Check, Process, Forward"
 
-1. **UI Interaction:** User selects a file in the web UI.
-2. **Local Upload:** The UI sends a `multipart/form-data` POST to `http://localhost:8099/send-file`.
-3. **Save & Prepare:** The local server saves the file to a temp location and calls [
-   `BridgeService.sendFile()`](app/src/main/java/info/benjaminhill/localmesh/mesh/BridgeService.kt).
-4. **Broadcast Command & Stream:** `BridgeService` does two things:
-    * Broadcasts a `NetworkMessage` containing an `HttpRequestWrapper` for `POST /send-file`. This
-      wrapper contains the `filename` and a unique `payloadId`.
-    * Sends the file content itself as a `Payload.Stream` to all peers via
-      `NearbyConnectionsManager`.
-5. **Peer Receives Command:** The peer's `BridgeService` collects the `NetworkMessage` from the
-   `incomingPayloads` flow. It parses the `filename` and `payloadId` and stores them in a map (
-   `incomingFilePayloads`) to prepare for the stream.
-6. **Peer Receives Stream:** The `handleStreamPayload` method in `BridgeService` is triggered
-   directly by the `NearbyConnectionsManager`'s callback. It uses the `payload.id` to look up the
-   `filename` from the map and saves the incoming stream to its local cache.
+Every node in the network follows a single, simple rule for every `NetworkMessage` it receives
+from a peer, implemented in `BridgeService.handleIncomingData()`:
 
-### 3.4. Detailed Flow: Topology Optimization
+1. **Check ID:** Look up the `messageId` in a local `seenMessageIds` cache.
+2. **If Seen, IGNORE:** If the ID is in the cache, the message is a duplicate from another path or a
+   cycle. The process stops here. This is the core mechanism that makes infinite loops impossible.
+3. **If New, Process & Forward:**
+    * **Cache:** Add the `messageId` to the `seenMessageIds` cache.
+    * **Process:**
+        * If the message contains an `httpRequest`, dispatch it to the local web server.
+        * If it contains a `fileChunk`, pass it to the `FileReassemblyManager`.
+    * **Forward:** Create a new `NetworkMessage` with an incremented `hopCount` and forward it to all
+      connected peers, **except for the peer it was received from.**
 
-This flow describes how the network self-optimizes its connections, driven by the `mesh-logic`
-module.
+This protocol guarantees that every message performs a controlled flood-fill of the network,
+reaching every connected node exactly once.
 
-1. **Payload Reception:** The Android [
-   `NearbyConnectionsManager`](app/src/main/java/info/benjaminhill/localmesh/mesh/NearbyConnectionsManager.kt)
-   receives an incoming `BYTES` payload and emits the raw `ByteArray` onto the
-   `incomingPayloads: SharedFlow`.
-2. **Optimizer Collection:** The [
-   `TopologyOptimizer`](mesh-logic/src/main/kotlin/info/benjaminhill/localmesh/logic/TopologyOptimizer.kt)
-   in the `mesh-logic` module collects this `incomingPayloads` flow.
-3. **Message Parsing:** For each payload, `TopologyOptimizer` deserializes it into a
-   `NetworkMessage` and inspects its content (e.g., data message with hop count, or gossip message
-   with a peer list).
-4. **State Update:** The optimizer updates its internal state maps (`nodeHopCounts`,
-   `neighborPeerLists`).
-5. **Periodic Analysis:** A timer in `TopologyOptimizer` periodically runs
-   `analyzeAndPerformRewiring()`.
-6. **Rewiring Decision:** The analysis method inspects the state maps to find an optimization
-   opportunity (e.g., a redundant local "triangle" connection and a known distant node).
-7. **Rewiring Action:** `TopologyOptimizer` calls methods on the [
-   `ConnectionManager`](mesh-logic/src/main/kotlin/info/benjaminhill/localmesh/logic/ConnectionManager.kt)
-   interface (e.g., `disconnectFrom(redundantPeer)` and `connectTo(distantNode)`).
-8. **Execution:** `NearbyConnectionsManager`, being the concrete implementation of
-   `ConnectionManager`, receives these calls and executes them using the Nearby Connections API,
-   changing the physical network topology.
+### 3.3. Applying the Protocol
+
+#### Chat & Display Commands
+
+When a user action triggers a broadcast (e.g., sending a chat message), the `LocalHttpServer` calls `BridgeService.broadcast()`. This method wraps the `HttpRequestWrapper` in a `NetworkMessage` and injects it into the gossip protocol by sending it to all directly connected peers. The gossip mechanism then ensures it propagates to the entire network.
+
+#### File Transfers (The New Flow)
+
+1. **`sendFile` Rewrite:** The `sendFile` method in `BridgeService`:
+    1. Takes a `File` and `destinationPath` as input.
+    2. Generates a unique `fileId`.
+    3. Reads the file and breaks it into small (e.g., 16KB) chunks.
+    4. For each chunk, creates a `NetworkMessage` containing a `FileChunk` object.
+    5. Feeds all of these `NetworkMessage`s into the gossip protocol by sending them to all direct
+       peers.
+
+2. **`FileReassemblyManager`:**
+    * This new manager class handles incoming `fileChunk`s.
+    * It uses a `Map` to store chunks, keyed by `fileId`.
+    * When all chunks for a file have arrived, it reassembles them in order and saves the result
+      using `AssetManager.saveFile()`.
+    * It includes a timeout mechanism to discard incomplete files after a certain period,
+      preventing memory leaks.
 
 ## 4. Technology Stack
 
@@ -209,9 +191,7 @@ module.
 
 ### Automated Setup
 
-For a fully automated setup and build process on a Linux-based environment (e.g. within
-jules.google.com), use the provided script: `bash JULES.sh`. It will download and configure all
-required Android SDK components.
+For a fully automated setup and build process on a Linux-based environment, use the provided script: `bash JULES.sh`. It will download and configure all required Android SDK components.
 
 ### Manual Steps
 
@@ -235,8 +215,7 @@ following routes:
 * `GET /display`: Triggers the `DisplayActivity` to open a specific path from the app's assets on
   remote peers. Expects a `path` query parameter. This is a broadcast-only endpoint.
 * `POST /send-file`: Initiates a file transfer. This is a multipart endpoint called from the local
-  web UI. It is also called synthetically on peer devices to notify them of an incoming file stream.
-* `POST /file-received`: Internal notification endpoint to log when a file transfer is complete.
+  web UI.
 * `GET /{path...}`: General-purpose route to serve static files from the `assets/web` directory.
 
 ## 7. Development Guidelines
@@ -355,114 +334,15 @@ mistakes. All strategies must be checked to avoid the following pitfalls:
 
 ## 10. Main Application Flows
 
-These are the primary user-facing flows in the application.
-
-### Main Display Flow
-
-1. **App Start**: The user opens the app and is presented with the `MainActivity`.
-2. **Service Start**: The user clicks "Start Service", which starts the `BridgeService` and launches
-   the `DisplayActivity`.
-3. **WebView Load**: The `DisplayActivity` loads the main `index.html` page in a `WebView`.
-4. **Folder List Request**: The `main.js` in the `WebView` makes a `GET` request to `/list?type=folders`.
-5. **Folder List Response**: The `LocalHttpServer` receives the request and gets the list of folders
-   from the `AssetManager`.
-6. **Folder Display**: The `main.js` receives the list of folders and displays them on the page.
-7. **Folder Click**: The user clicks on a folder (e.g., "eye").
-8. **Display Request**: The `main.js` sends a `GET` request to `/display?path=eye`.
-9. **Broadcast**: The `p2pBroadcastInterceptor` intercepts the request and broadcasts it to all
-   peers.
-10. **Peer Reception**: A peer receives the `HttpRequestWrapper` and its `BridgeService` dispatches
-    it to its `LocalHttpServer`.
-11. **Display Activity Launch**: The peer's `LocalHttpServer` receives the request and starts a
-    `DisplayActivity` with the "eye" path.
-12. **"eye" Display**: The `DisplayActivity` on the peer's device loads the `index.html` from the "
-    eye" folder.
-
-### Chat Flow
-
-1. **User Input**: The user types a message in the chat input box on the `index.html` page and
-   clicks "Send".
-2. **Chat Request**: The `main.js` sends a `POST` request to `/chat` with the message in the body.
-3. **Broadcast**: The `p2pBroadcastInterceptor` intercepts the request and broadcasts it to all
-   peers.
-4. **Peer Reception**: A peer receives the `HttpRequestWrapper` and its `BridgeService` dispatches
-   it to its `LocalHttpServer`.
-5. **Chat Message Handling**: The peer's `LocalHttpServer` receives the request and logs the chat
-   message.
-6. **UI Update**: The `main.js` on all devices (including the sender) will eventually be updated to
-   display the new chat message (this part is not yet implemented).
+### Main Display Flow & Chat Flow
+These flows remain largely the same at a high level. The key difference is that when the `p2pBroadcastInterceptor` calls `service.broadcast()`, the message is now propagated through the entire network via the gossip protocol, not just to direct neighbors.
 
 ### File Transfer Flow
+This flow is completely replaced by the new gossip mechanism.
 
-1. **File Selection**: The user selects a file (e.g., `my_cool_visualization.html`) to send using
-   the file input on the `index.html` page.
-2. **File Upload**: The `main.js` sends a `multipart/form-data` `POST` request to `/send-file` with
-   the file data, specifying a destination path (e.g., `/web/bats/index.html`).
-3. **File Save and Broadcast**: The `LocalHttpServer` saves the file to a temporary location (e.g.,
-   `app/src/main/assets/web/bats/index.html`), and then calls `BridgeService.sendFile()`.
-4. **Broadcast Command and Stream**: The `BridgeService` broadcasts an `HttpRequestWrapper` for
-   `POST /send-file` with the filename (`/web/bats/index.html`) and a unique `payloadId`, and also
-   sends the file content as a `Payload.Stream`.
-5. **Peer Receives Command**: The peer's `BridgeService` receives the `HttpRequestWrapper` and
-   stores the filename and `payloadId`.
-6. **Peer Receives Stream**: The peer's `BridgeService` receives the `Payload.Stream`, looks up the
-   filename using the `payloadId`, and saves the file to its local cache at the specified path (
-   e.g., `app/src/main/assets/web/bats/index.html`). This effectively adds a new visualization or
-   content to the peer's available assets.
-7. **UI Update**: The `main.js` on all devices will eventually be updated to show the newly
-   transferred file (this part is not yet implemented).
+1. **File Selection & Upload**: The user selects a file, and the web UI sends a `multipart/form-data` `POST` to `/send-file`.
+2. **Chunking and Gossiping**: The `LocalHttpServer` saves the file and calls `BridgeService.sendFile()`. `BridgeService` then breaks the file into numerous `FileChunk` messages and injects each one into the gossip protocol.
+3. **Peer Reception and Reassembly**: As each `FileChunk` message arrives at a peer, the `FileReassemblyManager` collects and stores it. Once all chunks for a file are received, the manager reassembles them and saves the final file to the local cache.
 
 ### Camera to Slideshow Flow
-
-This flow describes how a user on one phone can take a picture, which then gets added to a slideshow running on peer devices.
-
-1.  **Launch Camera (Originating Device):**
-    *   The user clicks a link to the camera, which sends a `GET /display?path=camera` request to the local server.
-    *   The `p2pBroadcastInterceptor` in `LocalHttpServer` has special logic for this path. It sees `path=camera` and intentionally *does not* broadcast the request. It allows the request to be handled locally.
-    *   The local server starts a `DisplayActivity` on the originating device, showing the `camera/index.html` UI.
-
-2.  **Take and Upload Picture (Originating Device):**
-    *   The user takes a picture and clicks "Upload".
-    *   `camera.js` sends the image data in a `multipart/form-data` `POST` request to `/send-file`. The filename is specified in the format `photos/camera_DEVICEID_TIMESTAMP.jpg`.
-
-3.  **Save Locally and Send to Peers (Originating Device):**
-    *   The `LocalHttpServer` receives the `/send-file` request.
-    *   It saves the image locally to its `web/photos/` directory via `AssetManager.saveFile()`.
-    *   It simultaneously sends the file to all connected peers using `BridgeService.sendFile()`, which uses a `Payload.Stream`.
-
-4.  **Trigger Remote Slideshow (Originating Device):**
-    *   After the `/send-file` request completes successfully, `camera.js` sends a `GET /display?path=slideshow` request to the local server.
-    *   This time, the `p2pBroadcastInterceptor` sees a `path` that is not "camera" and is in the `BROADCAST_PATHS`. It wraps the request and broadcasts it to all peers.
-    *   The interceptor stops local execution, so the slideshow does not start on the originating device.
-
-5.  **Receive File (Peer Device):**
-    *   The peer's `BridgeService` receives the `Payload.Stream` and saves the image to its own local `web/photos/` directory.
-
-6.  **Receive Slideshow Command (Peer Device):**
-    *   The peer's `BridgeService` receives the broadcasted `HttpRequestWrapper` for `/display?path=slideshow`.
-    *   It dispatches this request to its own `LocalHttpServer`.
-    *   The server starts a `DisplayActivity` on the peer device, showing the `slideshow/index.html` UI.
-
-7.  **Fetch Image List (Peer Device):**
-    *   `slideshow.js` on the peer device executes.
-    *   It calls `fetch('/list?path=photos&type=files')` to get a list of available images from its local server.
-    *   The server responds with a JSON list of filenames from its `web/photos/` directory, which now includes the newly received image.
-
-8.  **Display Image (Peer Device):**
-    *   `slideshow.js` picks a random image from the fetched list and displays it.
-    *   It continues to show a new random image every few seconds and periodically re-fetches the list of photos to discover new ones.
-
-#### Identified Race Condition
-
-A potential issue in this flow is a race condition. The "display slideshow" command (a small, fast message) may arrive and be processed on the peer device *before* the image file transfer (a larger, slower stream) is complete.
-
-*   **Effect:** The slideshow might start on the peer device before the new image is saved. The first few images shown in the rotation will not include the new one.
-*   **Mitigation:** The current `slideshow.js` implementation periodically re-fetches the list of images. This ensures that the new photo will be discovered and included in the slideshow on a subsequent cycle after its transfer is complete. This is considered acceptable behavior for the current design.
-
-### Status Flow
-
-1. **Status Request**: The `main.js` in the `WebView` makes a `GET` request to `/status`.
-2. **Status Response**: The `LocalHttpServer` receives the request and responds with a JSON object
-   containing the service status, device ID, and a list of connected peers.
-3. **Status Display**: The `main.js` receives the status and updates the UI to display the number of
-   connected peers.
+This flow is also updated to use the new file transfer mechanism. The race condition identified in the old flow still exists but is handled by the slideshow's periodic refresh.
