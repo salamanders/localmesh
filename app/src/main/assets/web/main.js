@@ -80,6 +80,21 @@ async function fetchFolders() {
         const contentFolders = data.filter(item => !FOLDER_BLACKLIST.includes(item));
 
         foldersList.innerHTML = ''; // Clear existing
+
+        // Add the special "Camera" option first
+        const cameraLi = document.createElement('li');
+        cameraLi.textContent = 'Camera';
+        cameraLi.style.fontWeight = 'bold'; // Make it stand out
+        cameraLi.addEventListener('click', () => {
+            console.log('Camera option selected.');
+            // First, navigate the local browser to the camera page
+            window.location.href = '/camera/index.html';
+            // Then, send the display command to peers to open the slideshow
+            displayFolder('slideshow');
+        });
+        foldersList.appendChild(cameraLi);
+
+
         if (contentFolders.length > 0) {
             contentFolders.forEach(folder => {
                 const li = document.createElement('li');
@@ -88,7 +103,8 @@ async function fetchFolders() {
                 foldersList.appendChild(li);
             });
         } else {
-            foldersList.innerHTML = '<li>No content folders found in assets.</li>';
+            // If there are no other folders, we don't need a message saying so,
+            // because the Camera option is always there.
         }
     } catch (e) {
         foldersList.innerHTML = '<li>Error loading folders.</li>';
