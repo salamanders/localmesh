@@ -33,10 +33,11 @@ object AssetManager {
     fun getFilesDir(context: Context): File =
         File(context.filesDir, UNPACKED_FILES_DIR)
 
-    fun getFolders(context: Context): List<String> {
-        val staticWebDir = getFilesDir(context)
-        return staticWebDir.listFiles()
-            ?.filter { it.isDirectory }
+    fun listDirectory(context: Context, subfolderPath: String? = null, listFolders: Boolean): List<String> {
+        val root = getFilesDir(context)
+        val targetDir = subfolderPath?.let { root.resolve(it) } ?: root
+        return targetDir.listFiles()
+            ?.filter { if (listFolders) it.isDirectory else it.isFile }
             ?.map { it.name }
             ?: emptyList()
     }

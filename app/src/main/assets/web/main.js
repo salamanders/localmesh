@@ -74,7 +74,7 @@ async function updateStatus() {
 
 async function fetchFolders() {
     try {
-        const response = await sendRequest('/folders');
+        const response = await sendRequest('/list');
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         const data = await response.json();
         const contentFolders = data.filter(item => !FOLDER_BLACKLIST.includes(item));

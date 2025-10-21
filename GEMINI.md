@@ -227,7 +227,7 @@ The Ktor server in [
 `LocalHttpServer.kt`](app/src/main/java/info/benjaminhill/localmesh/LocalHttpServer.kt) defines the
 following routes:
 
-* `GET /folders`: Lists the available content folders in the `assets/web` directory.
+* `GET /list?type=folders`: Lists the available content folders in the `assets/web` directory.
 * `GET /status`: Retrieves the current service status as a JSON object, including the device's ID
   and a list of connected peers.
 * `POST /chat`: Sends a chat message to all peers. Expects a URL-encoded body (e.g.,
@@ -363,7 +363,7 @@ These are the primary user-facing flows in the application.
 2. **Service Start**: The user clicks "Start Service", which starts the `BridgeService` and launches
    the `DisplayActivity`.
 3. **WebView Load**: The `DisplayActivity` loads the main `index.html` page in a `WebView`.
-4. **Folder List Request**: The `main.js` in the `WebView` makes a `GET` request to `/folders`.
+4. **Folder List Request**: The `main.js` in the `WebView` makes a `GET` request to `/list?type=folders`.
 5. **Folder List Response**: The `LocalHttpServer` receives the request and gets the list of folders
    from the `AssetManager`.
 6. **Folder Display**: The `main.js` receives the list of folders and displays them on the page.
@@ -411,6 +411,53 @@ These are the primary user-facing flows in the application.
    content to the peer's available assets.
 7. **UI Update**: The `main.js` on all devices will eventually be updated to show the newly
    transferred file (this part is not yet implemented).
+
+### Camera to Slideshow Flow
+
+This flow describes how a user on one phone can take a picture, which then gets added to a slideshow running on peer devices.
+
+1.  **Launch Camera (Originating Device):**
+    *   The user clicks a link to the camera, which sends a `GET /display?path=camera` request to the local server.
+    *   The `p2pBroadcastInterceptor` in `LocalHttpServer` has special logic for this path. It sees `path=camera` and intentionally *does not* broadcast the request. It allows the request to be handled locally.
+    *   The local server starts a `DisplayActivity` on the originating device, showing the `camera/index.html` UI.
+
+2.  **Take and Upload Picture (Originating Device):**
+    *   The user takes a picture and clicks "Upload".
+    *   `camera.js` sends the image data in a `multipart/form-data` `POST` request to `/send-file`. The filename is specified in the format `photos/camera_DEVICEID_TIMESTAMP.jpg`.
+
+3.  **Save Locally and Send to Peers (Originating Device):**
+    *   The `LocalHttpServer` receives the `/send-file` request.
+    *   It saves the image locally to its `web/photos/` directory via `AssetManager.saveFile()`.
+    *   It simultaneously sends the file to all connected peers using `BridgeService.sendFile()`, which uses a `Payload.Stream`.
+
+4.  **Trigger Remote Slideshow (Originating Device):**
+    *   After the `/send-file` request completes successfully, `camera.js` sends a `GET /display?path=slideshow` request to the local server.
+    *   This time, the `p2pBroadcastInterceptor` sees a `path` that is not "camera" and is in the `BROADCAST_PATHS`. It wraps the request and broadcasts it to all peers.
+    *   The interceptor stops local execution, so the slideshow does not start on the originating device.
+
+5.  **Receive File (Peer Device):**
+    *   The peer's `BridgeService` receives the `Payload.Stream` and saves the image to its own local `web/photos/` directory.
+
+6.  **Receive Slideshow Command (Peer Device):**
+    *   The peer's `BridgeService` receives the broadcasted `HttpRequestWrapper` for `/display?path=slideshow`.
+    *   It dispatches this request to its own `LocalHttpServer`.
+    *   The server starts a `DisplayActivity` on the peer device, showing the `slideshow/index.html` UI.
+
+7.  **Fetch Image List (Peer Device):**
+    *   `slideshow.js` on the peer device executes.
+    *   It calls `fetch('/list?path=photos&type=files')` to get a list of available images from its local server.
+    *   The server responds with a JSON list of filenames from its `web/photos/` directory, which now includes the newly received image.
+
+8.  **Display Image (Peer Device):**
+    *   `slideshow.js` picks a random image from the fetched list and displays it.
+    *   It continues to show a new random image every few seconds and periodically re-fetches the list of photos to discover new ones.
+
+#### Identified Race Condition
+
+A potential issue in this flow is a race condition. The "display slideshow" command (a small, fast message) may arrive and be processed on the peer device *before* the image file transfer (a larger, slower stream) is complete.
+
+*   **Effect:** The slideshow might start on the peer device before the new image is saved. The first few images shown in the rotation will not include the new one.
+*   **Mitigation:** The current `slideshow.js` implementation periodically re-fetches the list of images. This ensures that the new photo will be discovered and included in the slideshow on a subsequent cycle after its transfer is complete. This is considered acceptable behavior for the current design.
 
 ### Status Flow
 

@@ -98,6 +98,12 @@ class LocalHttpServer(
                     call.request.queryParameters["sourceNodeId"]?.takeUnless { it.isEmpty() } != null
                 val path = call.request.path()
 
+                // Special handling for /display path to allow local-only execution
+                if (path == "/display" && call.request.queryParameters["path"] == "camera") {
+                    // Execute locally, do not broadcast.
+                    return@onCall
+                }
+
                 if (isFromPeer || path !in BROADCAST_PATHS) {
                     // Let the request proceed normally without broadcasting.
                     return@onCall
@@ -163,8 +169,18 @@ class LocalHttpServer(
                 }
             })
             routing {
-                get("/folders") {
-                    call.respond(AssetManager.getFolders(service.applicationContext))
+                get("/list") {
+                    val path = call.request.queryParameters["path"]
+                    val type = call.request.queryParameters["type"] ?: "folders"
+                    val listFolders = when (type) {
+                        "folders" -> true
+                        "files" -> false
+                        else -> {
+                            call.respond(HttpStatusCode.BadRequest, "Invalid type parameter. Use 'folders' or 'files'.")
+                            return@get
+                        }
+                    }
+                    call.respond(AssetManager.listDirectory(service.applicationContext, path, listFolders))
                 }
                 get("/status") {
                     call.respond(

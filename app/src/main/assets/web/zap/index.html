@@ -37,21 +37,21 @@
 
         /* The central spark element is now a container for glyphs */
         .spark {
-            width: 70vmin; /* 80% of the smaller screen dimension */
-            height: 70vmin; /* 80% of the smaller screen dimension */
+            width: 80vmin; /* 80% of the smaller screen dimension */
+            height: 80vmin; /* 80% of the smaller screen dimension */
             position: relative;
             z-index: 2;
             display: flex;
             justify-content: center;
             align-items: center;
-            /* Animation for jiggling and the main effects */
-            animation: jiggle 10s infinite linear, effects 15s infinite ease-in-out;
+            /* Animation for hue */
+            animation: hue_shift 15s infinite ease-in-out;
         }
 
         /* Each individual spark character */
         .spark-glyph {
             position: absolute;
-            font-size: 70vmin; /* Extends to the maximum of width or height */
+            font-size: 100vmin; /* Extends to the maximum of width or height */
             line-height: 1;
             font-weight: 100; /* Makes the glyph thinner */
             color: var(--spark-color);
@@ -61,79 +61,29 @@
         }
 
         /* Stagger the animations for a more chaotic, organic look */
-        .spark-glyph:nth-child(1) { animation-delay: -1s; animation-duration: 10s; }
-        .spark-glyph:nth-child(2) { animation-delay: -2s; animation-duration: 9s; transform: scale(1.05); }
-        .spark-glyph:nth-child(3) { animation-delay: -3s; animation-duration: 11s; }
-        .spark-glyph:nth-child(4) { animation-delay: -4s; animation-duration: 8s; transform: scale(0.95); }
-        .spark-glyph:nth-child(5) { animation-delay: -5s; animation-duration: 12s; }
+        .spark-glyph:nth-child(1) { animation-delay: -1s; animation-duration: 5s; }
+        .spark-glyph:nth-child(2) { animation-delay: -2s; animation-duration: 6s; }
+        .spark-glyph:nth-child(3) { animation-delay: -3s; animation-duration: 7s; }
+        .spark-glyph:nth-child(4) { animation-delay: -4s; animation-duration: 8s; }
+        .spark-glyph:nth-child(5) { animation-delay: -5s; animation-duration: 9s; }
 
 
         /* Keyframe Animations */
 
         /* Main rotation for each spark glyph */
         @keyframes rotate {
-            0% { transform: rotate(0deg) scale(1); opacity: 0.7; }
-            50% { transform: rotate(180deg) scale(1.1); opacity: 1; }
-            100% { transform: rotate(360deg) scale(1); opacity: 0.7; }
-        }
-
-        /* Jiggling movement for the entire spark container */
-        @keyframes jiggle {
-            0%, 100% { transform: translate(0, 0); }
-            10% { transform: translate(-5px, -6px); }
-            20% { transform: translate(2px, 3px); }
-            30% { transform: translate(6px, -4px); }
-            40% { transform: translate(-3px, 2px); }
-            50% { transform: translate(0, 0); }
-            60% { transform: translate(-2px, 4px); }
-            70% { transform: translate(4px, -2px); }
-            80% { transform: translate(-3px, -3px); }
-            90% { transform: translate(6px, 3px); }
+            0% { transform: rotate(0deg); opacity: 0.5; }
+            50% { transform: rotate(180deg); opacity: 1; }
+            100% { transform: rotate(360deg); opacity: 0.5; }
         }
 
         /* Combined animation for color shifting and RGB split glitches using text-shadow */
-        @keyframes effects {
-            0%, 100% { filter: hue-rotate(0deg); transform: translate(0,0); text-shadow: 0 0 30px var(--glow-color); }
-
-            /* First Glitch Event */
-            20% { filter: hue-rotate(72deg); transform: translate(0,0); text-shadow: 0 0 30px var(--glow-color); }
-            20.05% {
-                transform: translate(15px, -15px) skewX(15deg); /* Increased offset */
-                /* This creates the RGB split effect by layering colored text-shadows */
-                text-shadow: 20px 0 #ff00de, -20px 0 #00f6ff; /* Increased offset */
-                filter: hue-rotate(72deg);
-            }
-            21% { /* Hold glitch for a noticeable duration */
-                transform: translate(15px, -15px) skewX(15deg);
-                text-shadow: 20px 0 #ff00de, -20px 0 #00f6ff;
-                filter: hue-rotate(72deg);
-            }
-            21.05% { /* Reset after glitch */
-                transform: translate(0,0);
-                text-shadow: 0 0 30px var(--glow-color);
-                filter: hue-rotate(72deg);
-            }
-
+        /* text-shadow: 0 0 30px var(--glow-color); text-shadow: 20px 0 #ff00de, -20px 0 #00f6ff;  */
+        @keyframes hue_shift {
+            0%, 100% { filter: hue-rotate(0deg); }
+            20% { filter: hue-rotate(72deg);  }
             40% { filter: hue-rotate(144deg); }
-
-            /* Second Glitch Event */
-            60% { filter: hue-rotate(216deg); transform: translate(0,0); text-shadow: 0 0 30px var(--glow-color); }
-            60.05% {
-                transform: translate(-15px, 15px) skewY(-15deg); /* Increased offset */
-                text-shadow: -20px 0 #ff00de, 20px 0 #00f6ff; /* Increased offset */
-                filter: hue-rotate(216deg);
-            }
-            61% { /* Hold glitch for a noticeable duration */
-                transform: translate(-15px, 15px) skewY(-15deg);
-                text-shadow: -20px 0 #ff00de, 20px 0 #00f6ff;
-                filter: hue-rotate(216deg);
-            }
-            61.05% { /* Reset after glitch */
-                transform: translate(0,0);
-                text-shadow: 0 0 30px var(--glow-color);
-                filter: hue-rotate(216deg);
-            }
-
+            60% { filter: hue-rotate(216deg); }
             80% { filter: hue-rotate(288deg); }
         }
 
@@ -194,7 +144,7 @@
             this.speed = random(0.005, 0.012); // Slower speed for longer persistence
             this.segments = Math.floor(random(6, 12)); // Fewer segments for bolder jags
             this.jaggedness = random(50, 70); // How far the line deviates
-            this.lineWidth = random(30, 60); // Thickness of the zap
+            this.lineWidth = random(20, 40); // Thickness of the zap
         }
 
         // Get a random point on one of the four screen edges

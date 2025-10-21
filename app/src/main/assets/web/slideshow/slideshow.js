@@ -1,96 +1,41 @@
 const slideshowImage = document.getElementById('slideshow-image');
-const IMAGE_LIST_KEY = 'slideshowImageList';
-const SLIDESHOW_INTERVAL = 5000; // 5 seconds
-const PEER_ID_KEY = 'slideshowPeerId';
+const SLIDESHOW_INTERVAL = 5000; // 5 seconds to change image
+const IMAGE_FETCH_INTERVAL = 15000; // 15 seconds to check for new images
 
-function getPeerId() {
-    let peerId = sessionStorage.getItem(PEER_ID_KEY);
-    if (!peerId) {
-        peerId = `peer_${Math.random().toString(36).substr(2, 9)}`;
-        sessionStorage.setItem(PEER_ID_KEY, peerId);
-    }
-    return peerId;
-}
+let imageList = [];
 
-function getImages() {
-    const imagesJson = localStorage.getItem(IMAGE_LIST_KEY);
-    return imagesJson ? JSON.parse(imagesJson) : [];
-}
-
-function addImage(newImage) {
-    const images = getImages();
-    if (!images.includes(newImage)) {
-        images.push(newImage);
-        localStorage.setItem(IMAGE_LIST_KEY, JSON.stringify(images));
+async function fetchImages() {
+    try {
+        const response = await fetch('/list?path=photos&type=files');
+        if (!response.ok) {
+            console.error('Failed to fetch image list:', response.status);
+            return;
+        }
+        imageList = await response.json();
+        console.log('Updated image list:', imageList);
+    } catch (error) {
+        console.error('Error fetching image list:', error);
     }
 }
-
-function setImages(imageList) {
-    localStorage.setItem(IMAGE_LIST_KEY, JSON.stringify(imageList));
-}
-
 
 function showRandomImage() {
-    const images = getImages();
-    if (images.length === 0) {
+    if (imageList.length === 0) {
         slideshowImage.alt = "Waiting for images...";
         slideshowImage.src = "";
         return;
     }
 
-    const randomIndex = Math.floor(Math.random() * images.length);
-    const imageUrl = `/${images[randomIndex]}`;
+    const randomIndex = Math.floor(Math.random() * imageList.length);
+    const imageUrl = `/photos/${imageList[randomIndex]}`;
     slideshowImage.src = imageUrl;
-    slideshowImage.alt = images[randomIndex];
+    slideshowImage.alt = imageList[randomIndex];
 }
 
-async function handleUrlParameters() {
-    const urlParams = new URLSearchParams(window.location.search);
-    const newImage = urlParams.get('newImage');
-    const requestImageList = urlParams.get('requestImageList');
-    const imageList = urlParams.get('imageList');
-    const forPeer = urlParams.get('forPeer');
-    const myPeerId = getPeerId();
-
-    if (newImage) {
-        addImage(newImage);
-        window.location.href = window.location.pathname;
-        return true;
-    }
-
-    if (requestImageList && requestImageList !== myPeerId) {
-        // Another peer is asking for the image list.
-        // Respond with a 50% chance to avoid a broadcast storm.
-        if (Math.random() > 0.5) {
-            const images = getImages();
-            if (images.length > 0) {
-                const imageListParam = encodeURIComponent(JSON.stringify(images));
-                await fetch(`/display?path=slideshow&imageList=${imageListParam}&forPeer=${requestImageList}`);
-            }
-        }
-    }
-
-    if (imageList && forPeer === myPeerId) {
-        // We received an image list from a peer.
-        const decodedList = JSON.parse(decodeURIComponent(imageList));
-        setImages(decodedList);
-        window.location.href = window.location.pathname; // Reload to clean url
-        return true;
-    }
-    return false;
-}
-
-async function requestImageListIfNeeded() {
-    if (getImages().length === 0) {
-        const myPeerId = getPeerId();
-        await fetch(`/display?path=slideshow&requestImageList=${myPeerId}`);
-    }
-}
-
-
-// --- Main Logic ---
-if (!handleUrlParameters()) {
-    requestImageListIfNeeded();
+async function initSlideshow() {
+    await fetchImages();
     showRandomImage();
     setInterval(showRandomImage, SLIDESHOW_INTERVAL);
+    setInterval(fetchImages, IMAGE_FETCH_INTERVAL);
 }
+
+initSlideshow();

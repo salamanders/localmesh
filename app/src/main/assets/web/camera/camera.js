@@ -5,17 +5,15 @@ let deviceId = null;
 
 // Fetch the device ID to create unique filenames
 async function getDeviceId() {
-    try {
-        const response = await fetch('/status');
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        const data = await response.json();
-        deviceId = data.id || 'unknown_node';
-    } catch (e) {
-        console.error('Failed to fetch device ID:', e);
-        deviceId = 'unknown_node';
+    const response = await fetch('/status');
+    if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
     }
+    const data = await response.json();
+    if (!data.id) {
+        throw new Error(`Status error! data: ${data}`);
+    }
+    deviceId = data.id;
 }
 
 getDeviceId();
@@ -34,7 +32,7 @@ uploadButton.addEventListener('click', async () => {
     try {
         const resizedBlob = await resizeImage(file, 800);
         const timestamp = Math.floor((new Date().getTime() - new Date('2025-10-01').getTime()) / 1000);
-        const uniqueFileName = `camera_${deviceId}_${timestamp}.jpg`;
+        const uniqueFileName = `photos/camera_${deviceId}_${timestamp}.jpg`;
 
         const formData = new FormData();
         formData.append('file', resizedBlob, uniqueFileName);
@@ -51,7 +49,7 @@ uploadButton.addEventListener('click', async () => {
 
         console.log('Upload successful. Notifying peers...');
         // Notify all other peers to switch to slideshow and add the new image
-        await fetch(`/display?path=slideshow&newImage=${encodeURIComponent(uniqueFileName)}`);
+        await fetch(`/display?path=slideshow`);
         console.log('Notification sent.');
         alert('Image uploaded and sent to slideshow!');
 

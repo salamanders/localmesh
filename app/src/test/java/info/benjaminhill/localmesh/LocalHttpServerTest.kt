@@ -208,7 +208,7 @@ class LocalHttpServerTest {
     }
 
     @Test
-    fun `GET folders returns list of directories`() = runBlocking {
+    fun `GET list with type folders returns list of directories`() = runBlocking {
         // Given
         val client = HttpClient(CIO)
         val tempDir = tempFolder.newFolder()
@@ -228,7 +228,7 @@ class LocalHttpServerTest {
         server.start()
 
         // When
-        val response = client.get("http://localhost:${LocalHttpServer.PORT}/folders")
+        val response = client.get("http://localhost:${LocalHttpServer.PORT}/list?type=folders")
         val responseBody = response.bodyAsText()
         val folderList = Json.decodeFromString<List<String>>(responseBody)
 
@@ -237,6 +237,40 @@ class LocalHttpServerTest {
         assertTrue(folderList.contains("folder1"))
         assertTrue(folderList.contains("folder2"))
         assertEquals(2, folderList.size)
+
+        client.close()
+    }
+
+    @Test
+    fun `GET list with type files returns list of files`() = runBlocking {
+        // Given
+        val client = HttpClient(CIO)
+        val tempDir = tempFolder.newFolder()
+        val webCacheDir = File(tempDir, "web") // Using "web" to match UNPACKED_FILES_DIR
+        webCacheDir.mkdirs()
+        File(webCacheDir, "file1.txt").createNewFile()
+        File(webCacheDir, "file2.txt").createNewFile()
+        File(webCacheDir, "folder1").mkdir() // Should be ignored
+
+        // Mock the context to return our temporary directory
+        val mockContext: Context = mock {
+            on { filesDir } doReturn tempDir
+        }
+        doReturn(mockContext).`when`(mockBridgeService).applicationContext
+
+        server = LocalHttpServer(mockBridgeService, mockLogger)
+        server.start()
+
+        // When
+        val response = client.get("http://localhost:${LocalHttpServer.PORT}/list?type=files")
+        val responseBody = response.bodyAsText()
+        val fileList = Json.decodeFromString<List<String>>(responseBody)
+
+        // Then
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(fileList.contains("file1.txt"))
+        assertTrue(fileList.contains("file2.txt"))
+        assertEquals(2, fileList.size)
 
         client.close()
     }
