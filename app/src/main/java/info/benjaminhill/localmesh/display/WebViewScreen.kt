@@ -87,6 +87,10 @@ fun WebViewScreen(url: String, onWebViewReady: (WebView) -> Unit = {}) {
             Log.i("WebViewScreen", "Updating URL to: $url")
             it.loadUrl(url)
         },
+        onRelease = {
+            Log.i("WebViewScreen", "Releasing WebView.")
+            it.destroy()
+        },
         modifier = Modifier.fillMaxSize()
     )
 }

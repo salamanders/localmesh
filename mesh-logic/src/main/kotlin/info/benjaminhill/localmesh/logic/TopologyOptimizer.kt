@@ -5,6 +5,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.cbor.Cbor
 import kotlinx.serialization.decodeFromByteArray
@@ -70,6 +72,7 @@ class TopologyOptimizer(
     private var lastRewireTimestamp = 0L
 
     private val scope = CoroutineScope(Dispatchers.IO)
+    private val connectionMutex = Mutex()
 
     fun start() {
         log("TopologyOptimizer.start()")
@@ -123,19 +126,19 @@ class TopologyOptimizer(
         }
     }
 
-    private fun analyzeAndPerformIslandDiscovery() {
+    private suspend fun analyzeAndPerformIslandDiscovery() = connectionMutex.withLock {
         log("Analyzing network for potential islands.")
 
         val myPeers = connectionManager.connectedPeers.value
         if (myPeers.size < targetConnections) {
             log("Not enough connections to justify island discovery. Skipping.")
-            return
+            return@withLock
         }
 
         val redundantPeer = findRedundantPeer()
         if (redundantPeer == null) {
             log("No redundant peer found to drop for island discovery. Skipping.")
-            return
+            return@withLock
         }
 
         log("Initiating island discovery: Dropping redundant peer '$redundantPeer' to search for new islands.")
@@ -145,9 +148,11 @@ class TopologyOptimizer(
 
     private fun CoroutineScope.listenForDiscoveredEndpoints() = launch {
         connectionManager.discoveredEndpoints.collect { endpointId ->
-            if (connectionManager.connectedPeers.value.size <= targetConnections) {
-                log("Attempting to connect to discovered endpoint $endpointId")
-                connectionManager.connectTo(endpointId)
+            connectionMutex.withLock {
+                if (connectionManager.connectedPeers.value.size <= targetConnections) {
+                    log("Attempting to connect to discovered endpoint $endpointId")
+                    connectionManager.connectTo(endpointId)
+                }
             }
         }
     }
@@ -185,18 +190,18 @@ class TopologyOptimizer(
     }
 
 
-    private fun analyzeAndPerformRewiring() {
+    private suspend fun analyzeAndPerformRewiring() = connectionMutex.withLock {
         log("Analyzing network for rewiring opportunities.")
 
         if (System.currentTimeMillis() - lastRewireTimestamp < REWIRING_COOLDOWN_MS) {
             log("Skipping rewiring analysis due to cooldown.")
-            return
+            return@withLock
         }
 
         val redundantPeer = findRedundantPeer()
         if (redundantPeer == null) {
             log("No redundant local connections found for rewiring.")
-            return
+            return@withLock
         }
 
         val myPeers = connectionManager.connectedPeers.value
@@ -214,7 +219,7 @@ class TopologyOptimizer(
 
         if (mostDistantNodeId == null) {
             log("No distant nodes found to rewire to.")
-            return
+            return@withLock
         }
 
         log("PERFORMING REWIRING: Dropping redundant peer $redundantPeer and connecting to distant node $mostDistantNodeId (hop count: ${mostDistantNodeEntry.value.first})")

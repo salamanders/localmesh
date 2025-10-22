@@ -82,6 +82,7 @@ dependencies {
     implementation(libs.androidx.material.icons.extended)
     implementation(libs.google.play.services.nearby)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.kotlinx.serialization.cbor)
     implementation(libs.ktor.serialization.kotlinx.json)
     implementation(libs.ktor.server.cio)
     implementation(libs.ktor.server.content.negotiation)

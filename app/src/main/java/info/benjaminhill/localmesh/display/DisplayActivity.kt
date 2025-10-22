@@ -13,12 +13,14 @@ import android.webkit.WebView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import info.benjaminhill.localmesh.LocalHttpServer
 import info.benjaminhill.localmesh.mesh.BridgeService
+import kotlinx.coroutines.channels.Channel
 
 /**
  * A reusable, single-instance Activity that hosts the primary WebView UI.
@@ -29,10 +31,11 @@ import info.benjaminhill.localmesh.mesh.BridgeService
  */
 class DisplayActivity : ComponentActivity() {
 
-    private val pathState = mutableStateOf<String?>(null)
+    private val pathState = mutableStateOf("index.html")
     private var bridgeService: BridgeService? = null
     private lateinit var webView: WebView
     private val handler = Handler(Looper.getMainLooper())
+    private val pathChannel = Channel<String>(Channel.UNLIMITED)
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -66,11 +69,16 @@ class DisplayActivity : ComponentActivity() {
 
         setContent {
             WebViewScreen(
-                url = "http://localhost:${LocalHttpServer.Companion.PORT}/${pathState.value}",
+                url = "http://localhost:${LocalHttpServer.PORT}/${pathState.value}",
                 onWebViewReady = { webView ->
                     this@DisplayActivity.webView = webView
                 }
             )
+            LaunchedEffect(Unit) {
+                for (path in pathChannel) {
+                    pathState.value = path
+                }
+            }
         }
 
         val intent = Intent(this, BridgeService::class.java)
@@ -79,6 +87,7 @@ class DisplayActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        pathChannel.close()
         unbindService(serviceConnection)
         stopWebViewHeartbeat()
     }
@@ -94,7 +103,8 @@ class DisplayActivity : ComponentActivity() {
                 Log.i(TAG, "Intent extra: $key = ${bundle.getString(key)}")
             }
         }
-        pathState.value = intent?.getStringExtra(EXTRA_PATH) ?: "index.html"
+        val path = intent?.getStringExtra(EXTRA_PATH) ?: "index.html"
+        pathChannel.trySend(path)
     }
 
     private fun startWebViewHeartbeat() {
