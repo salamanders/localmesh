@@ -60,7 +60,6 @@ class NearbyConnectionsManager(
     private val context: Context,
     private val endpointName: String,
     private val logger: AppLogger,
-    private val payloadReceivedCallback: (endpointId: String, payload: Payload) -> Unit,
     override val maxConnections: Int,
 ) : ConnectionManager {
 
@@ -198,8 +197,7 @@ class NearbyConnectionsManager(
                     }
 
                     else -> {
-                        logger.log("Passing non-BYTES payload from $endpointId to callback.")
-                        payloadReceivedCallback(endpointId, payload)
+                        logger.log("Ignoring non-BYTES payload from $endpointId, type: ${payload.type}")
                     }
                 }
             }

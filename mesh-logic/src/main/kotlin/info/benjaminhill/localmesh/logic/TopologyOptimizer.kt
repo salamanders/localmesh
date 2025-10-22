@@ -73,7 +73,6 @@ class TopologyOptimizer(
         scope.launch {
             listenForDiscoveredEndpoints()
             listenForIncomingPayloads()
-            startGossip()
             startRewiringAnalysis()
             startIslandDiscoveryAnalysis()
             cleanupNodeHopCounts()
@@ -125,28 +124,8 @@ class TopologyOptimizer(
 
             networkMessage.httpRequest?.let {
                 nodeHopCounts[it.sourceNodeId] =
-                    Pair(networkMessage.hopCount.toInt(), System.currentTimeMillis())
+                    Pair(networkMessage.hopCount, System.currentTimeMillis())
             }
-
-            networkMessage.gossip?.let {
-                neighborPeerLists[endpointId] = it.peerList
-            }
-        }
-    }
-
-    private fun CoroutineScope.startGossip() = launch {
-        while (true) {
-            delay(gossipIntervalMs)
-            val peers = connectionManager.connectedPeers.value.toList()
-            if (peers.isEmpty()) continue
-            val messageId = UUID.randomUUID()
-            val networkMessage = NetworkMessage(
-                hopCount = 0,
-                messageId = messageId.toString(),
-                gossip = Gossip(peerList = peers)
-            )
-            val payload = Json.encodeToString(networkMessage).toByteArray(Charsets.UTF_8)
-            connectionManager.sendPayload(peers, payload)
         }
     }
 
