@@ -26,7 +26,7 @@ This document outlines and consolidates bugs, code smells, and other issues foun
 
 ## 3. File Transfers Corrupted by Incorrect Deserialization
 * **Severity:** High
-* **Status:** Open
+* **Status:** Closed
 * **Description:** When receiving a `NetworkMessage`, the incoming `ByteArray` is converted to a UTF-8 string before being decoded. This corrupts the `data: ByteArray` field within any `FileChunk`, as raw binary data is not valid UTF-8. This will break the file sharing feature.
 * **Likely Files:**
     * `mesh-logic/src/main/kotlin/info/benjaminhill/localmesh/logic/TopologyOptimizer.kt`
