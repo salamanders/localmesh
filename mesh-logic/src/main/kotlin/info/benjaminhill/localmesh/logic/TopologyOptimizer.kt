@@ -5,6 +5,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.cbor.Cbor
+import kotlinx.serialization.decodeFromByteArray
+import kotlinx.serialization.encodeToByteArray
 import kotlinx.serialization.json.Json
 import java.util.concurrent.ConcurrentHashMap
 
@@ -94,6 +98,7 @@ class TopologyOptimizer(
         }
     }
 
+    @OptIn(ExperimentalSerializationApi::class)
     private fun CoroutineScope.startGossip() = launch {
         while (true) {
             delay(gossipIntervalMs)
@@ -102,7 +107,7 @@ class TopologyOptimizer(
                 val gossipMessage = NetworkMessage(
                     gossip = mapOf(endpointName to myPeers)
                 )
-                val payload = Json.encodeToString(gossipMessage).toByteArray(Charsets.UTF_8)
+                val payload = Cbor.encodeToByteArray(gossipMessage)
                 connectionManager.sendPayload(myPeers, payload)
                 log("Gossiped peer list to ${myPeers.size} peers.")
             }
@@ -140,18 +145,18 @@ class TopologyOptimizer(
 
     private fun CoroutineScope.listenForDiscoveredEndpoints() = launch {
         connectionManager.discoveredEndpoints.collect { endpointId ->
-            if (connectionManager.connectedPeers.value.size < targetConnections) {
+            if (connectionManager.connectedPeers.value.size <= targetConnections) {
                 log("Attempting to connect to discovered endpoint $endpointId")
                 connectionManager.connectTo(endpointId)
             }
         }
     }
 
+    @OptIn(ExperimentalSerializationApi::class)
     private fun CoroutineScope.listenForIncomingPayloads() = launch {
         connectionManager.incomingPayloads.collect { (endpointId, payload) ->
             try {
-                val jsonString = payload.toString(Charsets.UTF_8)
-                val networkMessage = Json.decodeFromString<NetworkMessage>(jsonString)
+                val networkMessage = Cbor.decodeFromByteArray<NetworkMessage>(payload)
 
                 // Update hop counts from any message that has a source
                 networkMessage.httpRequest?.let {

@@ -28,6 +28,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.serialization.cbor.Cbor
+import kotlinx.serialization.decodeFromByteArray
+import kotlinx.serialization.encodeToByteArray
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.util.UUID
@@ -139,7 +142,7 @@ class BridgeService : Service() {
         val networkMessage = NetworkMessage(
             httpRequest = wrapper
         )
-        val payload = Json.encodeToString(networkMessage).toByteArray(Charsets.UTF_8)
+        val payload = Cbor.encodeToByteArray(networkMessage)
         nearbyConnectionsManager.sendPayload(
             nearbyConnectionsManager.connectedPeers.value.toList(),
             payload
@@ -172,7 +175,7 @@ class BridgeService : Service() {
             val networkMessage = NetworkMessage(
                 fileChunk = fileChunk
             )
-            val payload = Json.encodeToString(networkMessage).toByteArray(Charsets.UTF_8)
+            val payload = Cbor.encodeToByteArray(networkMessage)
             nearbyConnectionsManager.sendPayload(
                 nearbyConnectionsManager.connectedPeers.value.toList(),
                 payload
@@ -273,8 +276,7 @@ class BridgeService : Service() {
     internal fun handleIncomingData(fromEndpointId: String, data: ByteArray) {
         serviceHardener.updateP2pMessageTime()
         logger.runCatchingWithLogging {
-            val jsonString = data.toString(Charsets.UTF_8)
-            val networkMessage = Json.decodeFromString<NetworkMessage>(jsonString)
+            val networkMessage = Cbor.decodeFromByteArray<NetworkMessage>(data)
 
             // 1. Check ID: Look up the messageId in a local seenMessageIds cache.
             if (seenMessageIds.containsKey(networkMessage.messageId)) {
@@ -298,7 +300,7 @@ class BridgeService : Service() {
 
             // Forward
             val nextHopMessage = networkMessage.copy(hopCount = networkMessage.hopCount + 1)
-            val payload = Json.encodeToString(nextHopMessage).toByteArray(Charsets.UTF_8)
+            val payload = Cbor.encodeToByteArray(nextHopMessage)
             val otherPeers =
                 nearbyConnectionsManager.connectedPeers.value.filter { it != fromEndpointId }
             if (otherPeers.isNotEmpty()) {
