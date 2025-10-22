@@ -19,7 +19,27 @@ data class FileChunk(
     /** The actual data of the chunk. Note: Requires special handling for ByteArray serialization. */
     @Serializable(with = ByteArraySerializer::class)
     val data: ByteArray
-)
+) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (javaClass != other?.javaClass) return false
+
+        other as FileChunk
+
+        if (chunkIndex != other.chunkIndex) return false
+        if (fileId != other.fileId) return false
+        if (destinationPath != other.destinationPath) return false
+
+        return true
+    }
+
+    override fun hashCode(): Int {
+        var result = chunkIndex
+        result = 31 * result + fileId.hashCode()
+        result = 31 * result + destinationPath.hashCode()
+        return result
+    }
+}
 
 /**
  * The standard wrapper for all messages sent across the mesh network.

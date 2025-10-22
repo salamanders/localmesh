@@ -11,13 +11,13 @@ import info.benjaminhill.localmesh.mesh.FileReassemblyManager
 import info.benjaminhill.localmesh.mesh.NearbyConnectionsManager
 import info.benjaminhill.localmesh.util.AssetManager
 import io.ktor.client.HttpClient
-import kotlinx.serialization.json.Json
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.request.get
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
 import org.junit.After
 import org.junit.Assert
 import org.junit.Before
@@ -77,11 +77,11 @@ class CacheAndDisplayTest {
             val client = HttpClient(CIO)
             for (i in 1..10) {
                 try {
-                    System.out.println("CacheAndDisplayTest: Attempting to connect to server, attempt $i...")
+                    println("CacheAndDisplayTest: Attempting to connect to server, attempt $i...")
                     // Use a lightweight request to check server status
                     client.get("http://localhost:${LocalHttpServer.PORT}/status")
                     connected = true
-                    System.out.println("CacheAndDisplayTest: Successfully connected to server.")
+                    println("CacheAndDisplayTest: Successfully connected to server.")
                     break
                 } catch (e: Exception) {
                     System.err.println("CacheAndDisplayTest: Connection attempt $i failed: ${e.message}")

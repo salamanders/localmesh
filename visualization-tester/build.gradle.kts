@@ -34,9 +34,14 @@ android {
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.1"
     }
+    val copyAppAssets = tasks.register<Copy>("copyAppAssets") {
+        from(project(":app").android.sourceSets.getByName("main").assets.srcDirs)
+        into(layout.buildDirectory.get().dir("generated/assets/app"))
+    }
+
     sourceSets {
         getByName("main") {
-            assets.srcDirs("../app/src/main/assets")
+            assets.srcDir(copyAppAssets.map { it.destinationDir })
         }
     }
     testOptions {

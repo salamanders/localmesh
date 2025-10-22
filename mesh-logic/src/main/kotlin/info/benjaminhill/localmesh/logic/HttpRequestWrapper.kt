@@ -1,7 +1,6 @@
 package info.benjaminhill.localmesh.logic
 
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 
 /**
  * A serializable wrapper for an HTTP request, used for sending requests between peers.
@@ -22,14 +21,4 @@ data class HttpRequestWrapper(
     val queryParams: String,
     val body: String,
     val sourceNodeId: String
-) {
-    fun toJson(): String {
-        return Json.encodeToString(serializer(), this)
-    }
-
-    companion object {
-        fun fromJson(jsonString: String): HttpRequestWrapper {
-            return Json.decodeFromString(serializer(), jsonString)
-        }
-    }
-}
+)

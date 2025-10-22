@@ -4,7 +4,6 @@
     <uses-permission android:name="android.permission.INTERNET" />
 
     <application
-        android:allowBackup="true"
         android:icon="@android:mipmap/sym_def_app_icon"
         android:label="Vis Tester"
         android:supportsRtl="true"

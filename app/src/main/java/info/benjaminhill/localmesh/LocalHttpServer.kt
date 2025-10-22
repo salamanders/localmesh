@@ -176,11 +176,20 @@ class LocalHttpServer(
                         "folders" -> true
                         "files" -> false
                         else -> {
-                            call.respond(HttpStatusCode.BadRequest, "Invalid type parameter. Use 'folders' or 'files'.")
+                            call.respond(
+                                HttpStatusCode.BadRequest,
+                                "Invalid type parameter. Use 'folders' or 'files'."
+                            )
                             return@get
                         }
                     }
-                    call.respond(AssetManager.listDirectory(service.applicationContext, path, listFolders))
+                    call.respond(
+                        AssetManager.listDirectory(
+                            service.applicationContext,
+                            path,
+                            listFolders
+                        )
+                    )
                 }
                 get("/status") {
                     call.respond(

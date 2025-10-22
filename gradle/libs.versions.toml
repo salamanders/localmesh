@@ -10,13 +10,16 @@ kotlinxCoroutinesTest = "1.10.2"
 lifecycleRuntimeKtx = "2.9.4"
 lifecycleRuntimeCompose = "2.9.4"
 activityCompose = "1.11.0"
-composeBom = "2025.10.00"
+composeBom = "2025.10.01"
 materialIconsExtended = "1.7.8"
 mockitoCore = "5.20.0"
 mockitoKotlin = "6.1.0"
 playServicesNearby = "19.3.0"
 ktor = "3.3.1"
 kotlinxSerializationJson = "1.9.0"
+powermockApiMockito2 = "2.0.9"
+powermockCore = "2.0.9"
+powermockModuleJunit4 = "2.0.9"
 robolectric = "4.16"
 slf4j = "2.0.17"
 
@@ -50,6 +53,9 @@ ktor-client-cio = { group = "io.ktor", name = "ktor-client-cio", version.ref = "
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinxSerializationJson" }
 mockito-core = { module = "org.mockito:mockito-core", version.ref = "mockitoCore" }
 mockito-kotlin = { module = "org.mockito.kotlin:mockito-kotlin", version.ref = "mockitoKotlin" }
+powermock-api-mockito2 = { module = "org.powermock:powermock-api-mockito2", version.ref = "powermockApiMockito2" }
+powermock-core = { module = "org.powermock:powermock-core", version.ref = "powermockCore" }
+powermock-module-junit4 = { module = "org.powermock:powermock-module-junit4", version.ref = "powermockModuleJunit4" }
 robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
 slf4j-simple = { group = "org.slf4j", name = "slf4j-simple", version.ref = "slf4j" }
 androidx-fragment-ktx = { group = "androidx.fragment", name = "fragment-ktx", version.ref = "androidxFragment" }

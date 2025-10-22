@@ -2,8 +2,8 @@ package info.benjaminhill.localmesh.mesh
 
 import android.content.Context
 import info.benjaminhill.localmesh.logic.FileChunk
-import info.benjaminhill.localmesh.util.AssetManager
 import info.benjaminhill.localmesh.util.AppLogger
+import info.benjaminhill.localmesh.util.AssetManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -95,7 +95,8 @@ class FileReassemblyManager(
 
         logger.log("Reassembling file '$destinationPath' ($fileId)")
         val sortedChunks = chunks.toSortedMap().values
-        val combinedBytes = sortedChunks.map { it.data }.fold(ByteArray(0)) { acc, bytes -> acc + bytes }
+        val combinedBytes =
+            sortedChunks.map { it.data }.fold(ByteArray(0)) { acc, bytes -> acc + bytes }
 
         AssetManager.saveFile(context, destinationPath, combinedBytes.inputStream())
         logger.log("Successfully reassembled and saved '$destinationPath'")

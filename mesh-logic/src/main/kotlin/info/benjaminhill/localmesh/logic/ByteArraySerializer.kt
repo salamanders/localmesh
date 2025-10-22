@@ -13,7 +13,8 @@ import java.util.Base64
  * This is necessary because kotlinx.serialization does not have a built-in ByteArray serializer for JSON.
  */
 object ByteArraySerializer : KSerializer<ByteArray> {
-    override val descriptor: SerialDescriptor = PrimitiveSerialDescriptor("ByteArray", PrimitiveKind.STRING)
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("ByteArray", PrimitiveKind.STRING)
 
     override fun serialize(encoder: Encoder, value: ByteArray) {
         encoder.encodeString(Base64.getEncoder().encodeToString(value))

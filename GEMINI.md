@@ -75,7 +75,8 @@ The system is composed of four main components:
       Kotlin Flows for events like `discoveredEndpoints` and `incomingPayloads`.
     * `TopologyOptimizer`: The "brains" of the network. It consumes a `ConnectionManager`
       implementation and contains all the logic for analyzing network health, and making high-level
-      decisions to optimize the network topology by instructing the `ConnectionManager` to rewire connections.
+      decisions to optimize the network topology by instructing the `ConnectionManager` to rewire
+      connections.
     * `SimulatedConnectionManager`: An in-memory implementation of the `ConnectionManager`
       interface, used for running unit and integration tests of the `TopologyOptimizer` on a
       standard JVM without needing Android devices.
@@ -148,7 +149,8 @@ from a peer, implemented in `BridgeService.handleIncomingData()`:
     * **Process:**
         * If the message contains an `httpRequest`, dispatch it to the local web server.
         * If it contains a `fileChunk`, pass it to the `FileReassemblyManager`.
-    * **Forward:** Create a new `NetworkMessage` with an incremented `hopCount` and forward it to all
+    * **Forward:** Create a new `NetworkMessage` with an incremented `hopCount` and forward it to
+      all
       connected peers, **except for the peer it was received from.**
 
 This protocol guarantees that every message performs a controlled flood-fill of the network,
@@ -158,7 +160,10 @@ reaching every connected node exactly once.
 
 #### Chat & Display Commands
 
-When a user action triggers a broadcast (e.g., sending a chat message), the `LocalHttpServer` calls `BridgeService.broadcast()`. This method wraps the `HttpRequestWrapper` in a `NetworkMessage` and injects it into the gossip protocol by sending it to all directly connected peers. The gossip mechanism then ensures it propagates to the entire network.
+When a user action triggers a broadcast (e.g., sending a chat message), the `LocalHttpServer` calls
+`BridgeService.broadcast()`. This method wraps the `HttpRequestWrapper` in a `NetworkMessage` and
+injects it into the gossip protocol by sending it to all directly connected peers. The gossip
+mechanism then ensures it propagates to the entire network.
 
 #### File Transfers (The New Flow)
 
@@ -191,7 +196,8 @@ When a user action triggers a broadcast (e.g., sending a chat message), the `Loc
 
 ### Automated Setup
 
-For a fully automated setup and build process on a Linux-based environment, use the provided script: `bash JULES.sh`. It will download and configure all required Android SDK components.
+For a fully automated setup and build process on a Linux-based environment, use the provided script:
+`bash JULES.sh`. It will download and configure all required Android SDK components.
 
 ### Manual Steps
 
@@ -336,33 +342,59 @@ mistakes. All strategies must be checked to avoid the following pitfalls:
 ## 10. Main Application Flows
 
 ### Main Display Flow & Chat Flow
-These flows remain largely the same at a high level. The key difference is that when the `p2pBroadcastInterceptor` calls `service.broadcast()`, the message is now propagated through the entire network via the gossip protocol, not just to direct neighbors.
+
+These flows remain largely the same at a high level. The key difference is that when the
+`p2pBroadcastInterceptor` calls `service.broadcast()`, the message is now propagated through the
+entire network via the gossip protocol, not just to direct neighbors.
 
 ### File Transfer Flow
+
 This flow is completely replaced by the new gossip mechanism.
 
-1. **File Selection & Upload**: The user selects a file, and the web UI sends a `multipart/form-data` `POST` to `/send-file`.
-2. **Chunking and Gossiping**: The `LocalHttpServer` saves the file and calls `BridgeService.sendFile()`. `BridgeService` then breaks the file into numerous `FileChunk` messages and injects each one into the gossip protocol.
-3. **Peer Reception and Reassembly**: As each `FileChunk` message arrives at a peer, the `FileReassemblyManager` collects and stores it. Once all chunks for a file are received, the manager reassembles them and saves the final file to the local cache.
+1. **File Selection & Upload**: The user selects a file, and the web UI sends a
+   `multipart/form-data` `POST` to `/send-file`.
+2. **Chunking and Gossiping**: The `LocalHttpServer` saves the file and calls
+   `BridgeService.sendFile()`. `BridgeService` then breaks the file into numerous `FileChunk`
+   messages and injects each one into the gossip protocol.
+3. **Peer Reception and Reassembly**: As each `FileChunk` message arrives at a peer, the
+   `FileReassemblyManager` collects and stores it. Once all chunks for a file are received, the
+   manager reassembles them and saves the final file to the local cache.
 
 ### Camera to Slideshow Flow
 
-This flow demonstrates how a file generated on one device is transferred and displayed on peer devices, using the unified gossip protocol for both the file data and the remote display command.
+This flow demonstrates how a file generated on one device is transferred and displayed on peer
+devices, using the unified gossip protocol for both the file data and the remote display command.
 
-1.  **File Capture (Device A):** The user opens the `/camera/index.html` page and selects a picture.
-2.  **Local Processing (Device A):** The `camera.js` script resizes the image and generates a unique filename (e.g., `photos/camera_ABCDE_12345.jpg`).
-3.  **Upload and Branch (Device A):** The script `POST`s the image to the local `/send-file` endpoint. The `LocalHttpServer` then does two things in parallel:
-    *   It immediately saves the image to the local `web_cache/photos` directory, making it available to Device A's own slideshow.
-    *   It calls `BridgeService.sendFile()` to begin the P2P transfer.
-4.  **File Gossiping (Device A -> Network):** The `BridgeService` chunks the image file into `FileChunk` messages and sends them to all its peers, initiating the gossip transfer.
-5.  **Remote Display Command (Device A -> Network):** Immediately after the upload, `camera.js` sends a `GET` request to `/display?path=slideshow`. The `p2pBroadcastInterceptor` catches this, wraps it in a `NetworkMessage`, and gossips it to all peers.
-6.  **Peer Reception (Device B):** A peer device receives two streams of messages: the `FileChunk` messages and the `display` command message.
-    *   The `FileReassemblyManager` collects the chunks and saves the completed image to its local `web_cache/photos` directory.
-    *   The `/display` command is dispatched to the local Ktor server, which launches the `DisplayActivity` showing the slideshow.
-7.  **Image Discovery (Device B):** The `slideshow.js` script on Device B starts and polls the local `/list?path=photos` endpoint to get a list of available images.
+1. **File Capture (Device A):** The user opens the `/camera/index.html` page and selects a picture.
+2. **Local Processing (Device A):** The `camera.js` script resizes the image and generates a unique
+   filename (e.g., `photos/camera_ABCDE_12345.jpg`).
+3. **Upload and Branch (Device A):** The script `POST`s the image to the local `/send-file`
+   endpoint. The `LocalHttpServer` then does two things in parallel:
+    * It immediately saves the image to the local `web_cache/photos` directory, making it available
+      to Device A's own slideshow.
+    * It calls `BridgeService.sendFile()` to begin the P2P transfer.
+4. **File Gossiping (Device A -> Network):** The `BridgeService` chunks the image file into
+   `FileChunk` messages and sends them to all its peers, initiating the gossip transfer.
+5. **Remote Display Command (Device A -> Network):** Immediately after the upload, `camera.js` sends
+   a `GET` request to `/display?path=slideshow`. The `p2pBroadcastInterceptor` catches this, wraps
+   it in a `NetworkMessage`, and gossips it to all peers.
+6. **Peer Reception (Device B):** A peer device receives two streams of messages: the `FileChunk`
+   messages and the `display` command message.
+    * The `FileReassemblyManager` collects the chunks and saves the completed image to its local
+      `web_cache/photos` directory.
+    * The `/display` command is dispatched to the local Ktor server, which launches the
+      `DisplayActivity` showing the slideshow.
+7. **Image Discovery (Device B):** The `slideshow.js` script on Device B starts and polls the local
+   `/list?path=photos` endpoint to get a list of available images.
 
 #### Known Issues & Design Considerations
 
-*   **Race Condition:** The `display` command is a single, small message that travels much faster than the series of (potentially large) `FileChunk` messages. This means the slideshow on Device B will almost always open **before** the new image has finished transferring and reassembling.
-*   **Polling Dependency:** The slideshow discovers the new image via a polling mechanism that checks for new files every 15 seconds. Due to the race condition, users can expect a delay of up to 15 seconds before a new photo appears in the slideshow on a peer device.
-*   **Local-Only Camera View:** The `p2pBroadcastInterceptor` has a specific exception for `/display?path=camera`. This request is **not** broadcast to peers and only executes locally. This prevents one user from remotely activating the cameras of all other users on the network.
+* **Race Condition:** The `display` command is a single, small message that travels much faster than
+  the series of (potentially large) `FileChunk` messages. This means the slideshow on Device B will
+  almost always open **before** the new image has finished transferring and reassembling.
+* **Polling Dependency:** The slideshow discovers the new image via a polling mechanism that checks
+  for new files every 15 seconds. Due to the race condition, users can expect a delay of up to 15
+  seconds before a new photo appears in the slideshow on a peer device.
+* **Local-Only Camera View:** The `p2pBroadcastInterceptor` has a specific exception for
+  `/display?path=camera`. This request is **not** broadcast to peers and only executes locally. This
+  prevents one user from remotely activating the cameras of all other users on the network.

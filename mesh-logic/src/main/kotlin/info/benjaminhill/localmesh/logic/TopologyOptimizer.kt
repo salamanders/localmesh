@@ -6,8 +6,6 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.encodeToString
-import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
 // How often to share peer lists with neighbors.

@@ -1,5 +1,6 @@
 package info.benjaminhill.localmesh.visualizationtester
 
+import android.annotation.SuppressLint
 import android.os.Bundle
 import android.webkit.WebView
 import androidx.activity.ComponentActivity
@@ -32,6 +33,7 @@ class VisualizationActivity : ComponentActivity() {
     }
 }
 
+@SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun VisualizationScreen(visualization: String) {
     val url = "file:///android_asset/web/$visualization/index.html"
@@ -41,6 +43,7 @@ fun VisualizationScreen(visualization: String) {
         AndroidView(
             factory = { context ->
                 WebView(context).apply {
+                    // Necessary risk
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
                     loadUrl(url)

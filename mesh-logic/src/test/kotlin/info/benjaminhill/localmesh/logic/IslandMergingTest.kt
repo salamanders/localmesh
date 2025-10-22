@@ -8,7 +8,6 @@ import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
-import kotlin.collections.ArrayDeque
 
 class IslandMergingTest {
 
@@ -55,8 +54,10 @@ class IslandMergingTest {
         // Give them time to connect
         withTimeout(5000L) {
             while (true) {
-                val island1Ready = island1.all { (manager, _) -> manager.connectedPeers.value.size == cliqueSize - 1 }
-                val island2Ready = island2.all { (manager, _) -> manager.connectedPeers.value.size == cliqueSize - 1 }
+                val island1Ready =
+                    island1.all { (manager, _) -> manager.connectedPeers.value.size == cliqueSize - 1 }
+                val island2Ready =
+                    island2.all { (manager, _) -> manager.connectedPeers.value.size == cliqueSize - 1 }
                 if (island1Ready && island2Ready) {
                     break
                 }

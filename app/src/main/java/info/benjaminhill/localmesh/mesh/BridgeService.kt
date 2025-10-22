@@ -13,7 +13,6 @@ import android.os.Binder
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import com.google.android.gms.nearby.connection.Payload
 import info.benjaminhill.localmesh.LocalHttpServer
 import info.benjaminhill.localmesh.MainActivity
 import info.benjaminhill.localmesh.R
@@ -22,10 +21,8 @@ import info.benjaminhill.localmesh.logic.HttpRequestWrapper
 import info.benjaminhill.localmesh.logic.NetworkMessage
 import info.benjaminhill.localmesh.logic.TopologyOptimizer
 import info.benjaminhill.localmesh.util.AppLogger
-import info.benjaminhill.localmesh.util.AssetManager
 import info.benjaminhill.localmesh.util.LogFileWriter
 import info.benjaminhill.localmesh.util.PermissionUtils
-import io.ktor.http.parseUrlEncodedParameters
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -293,7 +290,8 @@ class BridgeService : Service() {
             // Forward
             val nextHopMessage = networkMessage.copy(hopCount = networkMessage.hopCount + 1)
             val payload = Json.encodeToString(nextHopMessage).toByteArray(Charsets.UTF_8)
-            val otherPeers = nearbyConnectionsManager.connectedPeers.value.filter { it != fromEndpointId }
+            val otherPeers =
+                nearbyConnectionsManager.connectedPeers.value.filter { it != fromEndpointId }
             if (otherPeers.isNotEmpty()) {
                 nearbyConnectionsManager.sendPayload(otherPeers, payload)
             }
