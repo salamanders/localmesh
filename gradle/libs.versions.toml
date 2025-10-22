@@ -17,6 +17,7 @@ mockitoKotlin = "6.1.0"
 playServicesNearby = "19.3.0"
 ktor = "3.3.1"
 kotlinxSerializationJson = "1.9.0"
+kotlinxSerializationCbor = "1.9.0"
 powermockApiMockito2 = "2.0.9"
 powermockCore = "2.0.9"
 powermockModuleJunit4 = "2.0.9"
@@ -51,6 +52,7 @@ ktor-server-partialcontent = { group = "io.ktor", name = "ktor-server-partial-co
 ktor-serialization-kotlinx-json = { group = "io.ktor", name = "ktor-serialization-kotlinx-json", version.ref = "ktor" }
 ktor-client-cio = { group = "io.ktor", name = "ktor-client-cio", version.ref = "ktor" }
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinxSerializationJson" }
+kotlinx-serialization-cbor = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-cbor", version.ref = "kotlinxSerializationCbor" }
 mockito-core = { module = "org.mockito:mockito-core", version.ref = "mockitoCore" }
 mockito-kotlin = { module = "org.mockito.kotlin:mockito-kotlin", version.ref = "mockitoKotlin" }
 powermock-api-mockito2 = { module = "org.powermock:powermock-api-mockito2", version.ref = "powermockApiMockito2" }
