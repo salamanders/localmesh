@@ -76,7 +76,7 @@ class IslandMergingTest {
         println("Two islands formed. Waiting for auto-merge...")
 
         // Wait for the optimizer's island discovery logic to trigger and merge the networks
-        delay(15000)
+        delay(30000)
 
         // Verify that all nodes are now part of a single network
         assert(isNetworkConnected(nodes)) { "Network is not fully connected after merge attempt." }

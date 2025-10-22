@@ -28,7 +28,7 @@ class ScalabilityTest {
                 TopologyOptimizer(
                     connectionManager = manager,
                     log = { println("node$i: ${it.take(120)}") },
-                    endpointName = "node$i",
+                    endpointName = manager.id,
                     targetConnections = 3,
                     gossipIntervalMs = 1000L // Fast for testing
                 )

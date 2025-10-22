@@ -26,6 +26,7 @@ import info.benjaminhill.localmesh.util.PermissionUtils
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -66,9 +67,11 @@ class BridgeService : Service() {
     internal var ioDispatcher: CoroutineDispatcher = Dispatchers.IO
     private val seenMessageIds = ConcurrentHashMap<String, Long>()
     private lateinit var fileReassemblyManager: FileReassemblyManager
+    private lateinit var serviceScope: CoroutineScope
 
     override fun onCreate() {
         super.onCreate()
+        serviceScope = CoroutineScope(ioDispatcher)
         Log.i(TAG, "BridgeService.onCreate() called")
 
         logger = AppLogger(TAG, LogFileWriter(applicationContext))
@@ -244,6 +247,12 @@ class BridgeService : Service() {
         }
     }
 
+    override fun onDestroy() {
+        super.onDestroy()
+        serviceScope.cancel()
+        logger.log("BridgeService.onDestroy()")
+    }
+
     private fun stop() {
         logger.log("BridgeService.stop()")
         currentState = BridgeState.Stopping
@@ -279,7 +288,7 @@ class BridgeService : Service() {
 
             // Process
             networkMessage.httpRequest?.let { wrapper ->
-                CoroutineScope(ioDispatcher).launch {
+                serviceScope.launch {
                     localHttpServer.dispatchRequest(wrapper)
                 }
             }
@@ -299,7 +308,7 @@ class BridgeService : Service() {
     }
 
     private fun listenForIncomingData() {
-        CoroutineScope(ioDispatcher).launch {
+        serviceScope.launch {
             nearbyConnectionsManager.incomingPayloads.collect { (endpointId, data) ->
                 logger.log("Collected ${data.size} bytes from $endpointId from flow.")
                 handleIncomingData(endpointId, data)
