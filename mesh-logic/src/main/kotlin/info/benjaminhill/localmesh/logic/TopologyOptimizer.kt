@@ -6,6 +6,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.encodeToString
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -73,9 +74,25 @@ class TopologyOptimizer(
         scope.launch {
             listenForDiscoveredEndpoints()
             listenForIncomingPayloads()
+            startGossip()
             startRewiringAnalysis()
             startIslandDiscoveryAnalysis()
             cleanupNodeHopCounts()
+        }
+    }
+
+    private fun CoroutineScope.startGossip() = launch {
+        while (true) {
+            delay(gossipIntervalMs)
+            val myPeers = connectionManager.connectedPeers.value.toList()
+            if (myPeers.isNotEmpty()) {
+                val gossipMessage = NetworkMessage(
+                    gossip = mapOf(endpointName to myPeers)
+                )
+                val payload = Json.encodeToString(gossipMessage).toByteArray(Charsets.UTF_8)
+                connectionManager.sendPayload(myPeers, payload)
+                log("Gossiped peer list to ${myPeers.size} peers.")
+            }
         }
     }
 
@@ -119,12 +136,25 @@ class TopologyOptimizer(
 
     private fun CoroutineScope.listenForIncomingPayloads() = launch {
         connectionManager.incomingPayloads.collect { (endpointId, payload) ->
-            val jsonString = payload.toString(Charsets.UTF_8)
-            val networkMessage = Json.decodeFromString<NetworkMessage>(jsonString)
+            try {
+                val jsonString = payload.toString(Charsets.UTF_8)
+                val networkMessage = Json.decodeFromString<NetworkMessage>(jsonString)
 
-            networkMessage.httpRequest?.let {
-                nodeHopCounts[it.sourceNodeId] =
-                    Pair(networkMessage.hopCount, System.currentTimeMillis())
+                // Update hop counts from any message that has a source
+                networkMessage.httpRequest?.let {
+                    nodeHopCounts[it.sourceNodeId] =
+                        Pair(networkMessage.hopCount, System.currentTimeMillis())
+                }
+
+                // Process gossip payload
+                networkMessage.gossip?.let { gossip ->
+                    gossip.forEach { (nodeId, peers) ->
+                        neighborPeerLists[nodeId] = peers
+                        log("Received gossip from $nodeId, knows ${peers.size} peers.")
+                    }
+                }
+            } catch (e: Exception) {
+                log("Error decoding network message from $endpointId: ${e.message}")
             }
         }
     }

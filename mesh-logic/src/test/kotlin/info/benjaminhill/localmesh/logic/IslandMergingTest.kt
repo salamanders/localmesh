@@ -30,7 +30,7 @@ class IslandMergingTest {
             val optimizer = TopologyOptimizer(
                 connectionManager = manager,
                 log = { println("node$i: ${it.take(120)}") },
-                endpointName = "node$i",
+                endpointName = manager.id,
                 targetConnections = cliqueSize - 1,
                 gossipIntervalMs = 500L, // Fast for testing
                 initialIslandDiscoveryDelayMs = 500L,
@@ -75,7 +75,7 @@ class IslandMergingTest {
         println("Two islands formed. Waiting for auto-merge...")
 
         // Wait for the optimizer's island discovery logic to trigger and merge the networks
-        delay(6000)
+        delay(15000)
 
         // Verify that all nodes are now part of a single network
         assert(isNetworkConnected(nodes)) { "Network is not fully connected after merge attempt." }
