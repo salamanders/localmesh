@@ -141,14 +141,8 @@ class LocalHttpServer(
         logger.log("Attempting to start LocalHttpServer...")
         server = embeddedServer(KtorCIO, port = PORT) {
             install(NoCachePlugin)
-            // Automatically handle JSON serialization/deserialization for API endpoints.
-            install(ContentNegotiation) {
-                json()
-            }
-            // Enable support for HTTP Range requests, essential for video streaming.
             install(PartialContent)
             install(p2pBroadcastInterceptor)
-            // Centralized error handling to catch and log any unhandled exceptions.
             install(StatusPages) {
                 exception<Throwable> { call, cause ->
                     logger.e("Unhandled Ktor error on ${call.request.path()}", cause)
@@ -168,7 +162,12 @@ class LocalHttpServer(
                         }
                 }
             })
+
+            // API routes with JSON serialization
             routing {
+                install(ContentNegotiation) {
+                    json()
+                }
                 get("/list") {
                     val path = call.request.queryParameters["path"]
                     val type = call.request.queryParameters["type"] ?: "folders"
@@ -287,6 +286,10 @@ class LocalHttpServer(
                     logger.log("Notification: File '$filename' was successfully received from $source.")
                     call.respond(mapOf("status" to HttpStatusCode.OK))
                 }
+            }
+
+            // Static file serving
+            routing {
                 logger.log("Serving static files from: ${AssetManager.getFilesDir(service.applicationContext).absolutePath}")
                 staticFiles(
                     "/",

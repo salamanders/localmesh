@@ -42,11 +42,13 @@ class ServiceHardener(
         acquireWakeLock()
         resetTimestamps()
 
-        if (::scheduler.isInitialized && !scheduler.isShutdown) {
-            logger.log("Hardener scheduler already running.")
-            return
+        synchronized(this) {
+            if (::scheduler.isInitialized && !scheduler.isShutdown) {
+                logger.log("Hardener scheduler already running.")
+                return
+            }
+            scheduler = Executors.newSingleThreadScheduledExecutor()
         }
-        scheduler = Executors.newSingleThreadScheduledExecutor()
         val initialDelay = Random.nextLong(60, 180)
         scheduler.scheduleWithFixedDelay(
             this::runChecks,
@@ -60,12 +62,14 @@ class ServiceHardener(
     fun stop() {
         logger.log("ServiceHardener stopping.")
         releaseWakeLock()
-        if (::scheduler.isInitialized && !scheduler.isShutdown) {
-            scheduler.shutdown()
-            scope.cancel()
-            logger.runCatchingWithLogging {
-                if (!scheduler.awaitTermination(5, TimeUnit.SECONDS)) {
-                    scheduler.shutdownNow()
+        synchronized(this) {
+            if (::scheduler.isInitialized && !scheduler.isShutdown) {
+                scheduler.shutdown()
+                scope.cancel()
+                logger.runCatchingWithLogging {
+                    if (!scheduler.awaitTermination(5, TimeUnit.SECONDS)) {
+                        scheduler.shutdownNow()
+                    }
                 }
             }
         }

@@ -4,6 +4,17 @@ This document outlines and consolidates bugs, code smells, and other issues foun
 
 ---
 
+## NEW: Test Suite Instability and Resource Conflicts
+* **Severity:** High
+* **Status:** Open
+* **Description:** The test suite for the `app` module is highly unstable. Multiple tests that involve a Ktor server (`CacheAndDisplayTest`, `LocalHttpServerTest`) frequently fail with `java.net.BindException`. This indicates a systemic problem with test isolation, where server instances are not being properly shut down between test runs, causing port conflicts. Fixing one test often causes another to fail, making it difficult to get a stable green build. The suite requires a significant refactoring to ensure proper resource management and cleanup after each test.
+* **Likely Files:**
+    * `app/src/test/java/info/benjaminhill/localmesh/display/CacheAndDisplayTest.kt`
+    * `app/src/test/java/info/benjaminhill/localmesh/LocalHttpServerTest.kt`
+* **Resolution:** Refactor all tests involving Ktor servers to use a consistent and robust setup/teardown pattern that guarantees the server is stopped and the port is released after each test. Consider using a shared test rule or base class to manage the server lifecycle.
+
+---
+
 ## 1. `TopologyOptimizer` is Non-Functional Due to Missing Gossip Mechanism
 * **Severity:** High
 * **Status:** Closed
@@ -64,7 +75,7 @@ This document outlines and consolidates bugs, code smells, and other issues foun
 
 ## 7. Race Condition in `TopologyOptimizer` Can Exceed Connection Limits
 * **Severity:** Medium
-* **Status:** Open
+* **Status:** Closed
 * **Description:** The `listenForDiscoveredEndpoints` function has a non-atomic check-then-act pattern. If multiple endpoints are discovered in quick succession, it can initiate more connections than the `targetConnections` limit, potentially causing network instability.
 * **Likely Files:** `mesh-logic/src/main/kotlin/info/benjaminhill/localmesh/logic/TopologyOptimizer.kt`
 * **Resolution:** Synchronize access to the connection logic or use a queueing mechanism to handle discovered endpoints one at a time.
@@ -73,7 +84,7 @@ This document outlines and consolidates bugs, code smells, and other issues foun
 
 ## 8. Race Condition Between Rewiring and Island Discovery
 * **Severity:** Medium
-* **Status:** Open
+* **Status:** Closed
 * **Description:** The `analyzeAndPerformRewiring` and `analyzeAndPerformIslandDiscovery` functions can run concurrently and both can modify network connections. This can lead to race conditions and unexpected network behavior.
 * **Likely Files:** `mesh-logic/src/main/kotlin/info/benjaminhill/localmesh/logic/TopologyOptimizer.kt`
 * **Resolution:** Use a mutex or other synchronization mechanism to ensure only one of these analysis functions can modify the network at a time.
@@ -82,7 +93,7 @@ This document outlines and consolidates bugs, code smells, and other issues foun
 
 ## 9. Potential Race Condition in `ServiceHardener` Initialization
 * **Severity:** Medium
-* **Status:** Open
+* **Status:** Closed
 * **Description:** The check to see if the `scheduler` is already running in `ServiceHardener.start()` is not atomic. Multiple rapid calls to `start()` could lead to multiple schedulers being created.
 * **Likely Files:** `app/src/main/java/info/benjaminhill/localmesh/mesh/ServiceHardener.kt`
 * **Resolution:** The original report mentions a flaky test (`CacheAndDisplayTest`) blocking the fix. The fix would likely involve using `synchronized` blocks or a more robust state management mechanism.
@@ -91,7 +102,7 @@ This document outlines and consolidates bugs, code smells, and other issues foun
 
 ## 10. Potential Resource Leak from Unclear WebView Lifecycle
 * **Severity:** Medium
-* **Status:** Open
+* **Status:** Closed
 * **Description:** The `WebView` instance in `DisplayActivity.kt` is managed by Jetpack Compose. It's not clear if it's being properly destroyed (e.g., `webView.destroy()`) when the composable is removed from the screen, which could lead to resource leaks.
 * **Likely Files:**
     * `app/src/main/java/info/benjaminhill/localmesh/display/DisplayActivity.kt`
@@ -102,7 +113,7 @@ This document outlines and consolidates bugs, code smells, and other issues foun
 
 ## 11. Usability Bug: Race Condition in `onNewIntent` Can Load Incorrect URL
 * **Severity:** Medium
-* **Status:** Open
+* **Status:** Closed
 * **Description:** In `DisplayActivity`, multiple intents arriving in quick succession can cause a race condition, where the `WebView` may not load the URL from the most recent intent, leading to a confusing user experience.
 * **Likely Files:** `app/src/main/java/info/benjaminhill/localmesh/display/DisplayActivity.kt`
 * **Resolution:** Decouple URL loading from state updates. Use a `LaunchedEffect` that listens for URL changes and ensures the `WebView` loads them sequentially and only when it's ready.

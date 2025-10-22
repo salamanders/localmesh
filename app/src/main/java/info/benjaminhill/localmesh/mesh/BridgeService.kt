@@ -277,7 +277,7 @@ class BridgeService : Service() {
         serviceHardener.updateP2pMessageTime()
         logger.runCatchingWithLogging {
             val networkMessage = Cbor.decodeFromByteArray<NetworkMessage>(data)
-
+            logger.log("Received message ${networkMessage.messageId} from $fromEndpointId")
             // 1. Check ID: Look up the messageId in a local seenMessageIds cache.
             if (seenMessageIds.containsKey(networkMessage.messageId)) {
                 logger.log("Ignoring seen message: ${networkMessage.messageId}")
@@ -303,6 +303,7 @@ class BridgeService : Service() {
             val payload = Cbor.encodeToByteArray(nextHopMessage)
             val otherPeers =
                 nearbyConnectionsManager.connectedPeers.value.filter { it != fromEndpointId }
+            logger.log("Forwarding message ${networkMessage.messageId} to $otherPeers")
             if (otherPeers.isNotEmpty()) {
                 nearbyConnectionsManager.sendPayload(otherPeers, payload)
             }
