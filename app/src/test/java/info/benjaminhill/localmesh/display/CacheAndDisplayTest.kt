@@ -3,13 +3,15 @@ package info.benjaminhill.localmesh.display
 import android.content.Context
 import android.content.Intent
 import androidx.test.core.app.ApplicationProvider
-import com.google.android.gms.nearby.connection.Payload
 import info.benjaminhill.localmesh.LocalHttpServer
-import info.benjaminhill.localmesh.logic.HttpRequestWrapper
+import info.benjaminhill.localmesh.logic.FileChunk
+import info.benjaminhill.localmesh.logic.NetworkMessage
 import info.benjaminhill.localmesh.mesh.BridgeService
+import info.benjaminhill.localmesh.mesh.FileReassemblyManager
 import info.benjaminhill.localmesh.mesh.NearbyConnectionsManager
 import info.benjaminhill.localmesh.util.AssetManager
 import io.ktor.client.HttpClient
+import kotlinx.serialization.json.Json
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.request.get
 import io.ktor.client.statement.HttpResponse
@@ -52,13 +54,16 @@ class CacheAndDisplayTest {
         // Ensure assets are unpacked for the server to serve them
         AssetManager.unpack(ApplicationProvider.getApplicationContext())
 
-        // 2. Replace the real NearbyConnectionsManager with a mock to prevent network calls
-        // This is necessary because Robolectric creates a real service, but we want to
-        // isolate the test from actual P2P communication.
+        // 2. Replace the real NearbyConnectionsManager and FileReassemblyManager with mocks
+        // to isolate the test from actual P2P communication and file reassembly logic.
         mockNearbyConnectionsManager = mock()
         val ncmField = BridgeService::class.java.getDeclaredField("nearbyConnectionsManager")
-        ncmField.isAccessible = true // Allow modification of a private field
+        ncmField.isAccessible = true
         ncmField.set(bridgeService, mockNearbyConnectionsManager)
+
+        val frmField = BridgeService::class.java.getDeclaredField("fileReassemblyManager")
+        frmField.isAccessible = true
+        frmField.set(bridgeService, FileReassemblyManager(bridgeService, mock()))
 
         // 3. Get a reference to the LocalHttpServer created by the service
         localHttpServer = bridgeService.localHttpServer
@@ -112,26 +117,24 @@ class CacheAndDisplayTest {
     @Test
     fun testFileCachingAndDisplay() = runBlocking {
         // --- Simulate receiving a file from a peer ---
-
-        // 1. Create a STREAM payload from the temporary file. This assigns it a unique ID.
-        val streamPayload = Payload.fromStream(tempFileToSend.inputStream())
-        val payloadId = streamPayload.id
         val destinationPath = "test/index.html"
+        val fileContent = tempFileToSend.readBytes()
 
-        // 2. Create the accompanying command (HttpRequestWrapper) that "arrived" as a BYTES payload.
-        // This tells the BridgeService what to name the file when the stream arrives.
-        val wrapper = HttpRequestWrapper(
-            method = "POST",
-            path = "/send-file",
-            queryParams = "filename=$destinationPath&payloadId=$payloadId",
-            body = "",
-            sourceNodeId = "fake-peer-id"
+        // 1. Create a FileChunk for a single-chunk file.
+        val fileChunk = FileChunk(
+            fileId = "test-file-id",
+            destinationPath = destinationPath,
+            chunkIndex = 0,
+            totalChunks = 1,
+            data = fileContent
         )
-        val bytesPayload = Payload.fromBytes(wrapper.toJson().toByteArray(Charset.defaultCharset()))
+        // 2. Wrap it in a NetworkMessage.
+        val networkMessage = NetworkMessage(fileChunk = fileChunk)
+        val payloadBytes = Json.encodeToString(networkMessage).toByteArray(Charset.defaultCharset())
 
-        // 3. Call the handlers on the *real* BridgeService to simulate the two payloads arriving.
-        bridgeService.handleIncomingData(bytesPayload.asBytes()!!) // Primes the service
-        bridgeService.handleStreamPayload(streamPayload) // Delivers the file data
+        // 3. Call the handler on the *real* BridgeService to simulate the payload arriving.
+        // This will trigger the FileReassemblyManager to save the file.
+        bridgeService.handleIncomingData("fake-peer-id", payloadBytes)
 
         // --- Verify the file is cached and can be displayed ---
         val cachedFile = File(webCacheDir, destinationPath)

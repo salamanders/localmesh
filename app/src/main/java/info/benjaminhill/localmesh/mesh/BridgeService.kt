@@ -17,6 +17,7 @@ import com.google.android.gms.nearby.connection.Payload
 import info.benjaminhill.localmesh.LocalHttpServer
 import info.benjaminhill.localmesh.MainActivity
 import info.benjaminhill.localmesh.R
+import info.benjaminhill.localmesh.logic.FileChunk
 import info.benjaminhill.localmesh.logic.HttpRequestWrapper
 import info.benjaminhill.localmesh.logic.NetworkMessage
 import info.benjaminhill.localmesh.logic.TopologyOptimizer
@@ -65,8 +66,9 @@ class BridgeService : Service() {
     @Volatile
     var serviceStartTime = 0L
 
-    internal val incomingFilePayloads = ConcurrentHashMap<Long, String>()
     internal var ioDispatcher: CoroutineDispatcher = Dispatchers.IO
+    private val seenMessageIds = ConcurrentHashMap<String, Long>()
+    private lateinit var fileReassemblyManager: FileReassemblyManager
 
     override fun onCreate() {
         super.onCreate()
@@ -86,14 +88,14 @@ class BridgeService : Service() {
             if (!::localHttpServer.isInitialized) {
                 localHttpServer = LocalHttpServer(this, logger)
             }
+            if (!::fileReassemblyManager.isInitialized) {
+                fileReassemblyManager = FileReassemblyManager(this, logger)
+            }
             if (!::nearbyConnectionsManager.isInitialized) {
                 nearbyConnectionsManager = NearbyConnectionsManager(
                     context = this,
                     endpointName = endpointName,
                     logger = logger,
-                    payloadReceivedCallback = { _, payload ->
-                        handleStreamPayload(payload)
-                    },
                     maxConnections = TopologyOptimizer.TARGET_CONNECTIONS + 1
                 )
             }
@@ -108,44 +110,6 @@ class BridgeService : Service() {
         } ?: run {
             logger.e("FATAL: Service crashed on create.")
             currentState = BridgeState.Error("onCreate failed")
-        }
-    }
-
-    internal fun handleIncomingData(data: ByteArray) {
-        serviceHardener.updateP2pMessageTime()
-        logger.runCatchingWithLogging {
-            val jsonString = data.toString(Charsets.UTF_8)
-            val networkMessage = Json.decodeFromString<NetworkMessage>(jsonString)
-
-            networkMessage.httpRequest?.let { wrapper ->
-                if (wrapper.path == "/send-file") {
-                    val params = wrapper.queryParams.parseUrlEncodedParameters()
-                    val filename = params["filename"]
-                    val payloadId = params["payloadId"]?.toLongOrNull()
-                    if (filename != null && payloadId != null) {
-                        incomingFilePayloads[payloadId] = filename
-                        logger.log("Expecting file '$filename' for payload $payloadId")
-                    }
-                }
-
-                CoroutineScope(ioDispatcher).launch {
-                    localHttpServer.dispatchRequest(wrapper)
-                }
-            }
-        }
-    }
-
-    internal fun handleStreamPayload(payload: Payload) {
-        val filename = incomingFilePayloads.remove(payload.id)
-        if (filename == null) {
-            logger.e("Received stream payload with unknown ID: ${payload.id}")
-            return
-        }
-        logger.runCatchingWithLogging {
-            payload.asStream()?.asInputStream()?.use { inputStream ->
-                AssetManager.saveFile(applicationContext, filename, inputStream)
-            }
-            logger.log("File received and saved: $filename")
         }
     }
 
@@ -173,8 +137,6 @@ class BridgeService : Service() {
 
     fun broadcast(wrapper: HttpRequestWrapper) {
         val networkMessage = NetworkMessage(
-            hopCount = 0,
-            messageId = UUID.randomUUID().toString(),
             httpRequest = wrapper
         )
         val payload = Json.encodeToString(networkMessage).toByteArray(Charsets.UTF_8)
@@ -185,36 +147,37 @@ class BridgeService : Service() {
     }
 
     /**
-     * Sends a file to all connected peers using a two-step process.
+     * Sends a file to all connected peers using the gossip protocol.
      *
-     * 1.  A `BYTES` payload is broadcast containing the file's destination path and the ID of the
-     *     upcoming stream payload. This "primes" the receiving nodes to know the filename.
-     * 2.  The file content is sent as a `STREAM` payload.
-     *
-     * This approach is used over `Payload.File` for two main reasons:
-     * - **Robustness:** Project documentation (`P2P_DOCS.md`) notes that `Payload.File` can be
-     *   unreliable with the `P2P_CLUSTER` connection strategy.
-     * - **Simplicity:** The app bridges HTTP requests, which are stream-based. Using
-     *   `Payload.Stream` avoids the complexity of saving incoming HTTP data to a temporary file
-     *   before sending it over the P2P network.
+     * 1.  The file is broken into small chunks (32KB).
+     * 2.  Each chunk is wrapped in a `NetworkMessage` with a `FileChunk` object.
+     * 3.  Each `NetworkMessage` is sent to all directly connected peers.
+     * 4.  The gossip protocol ensures the chunks propagate throughout the network.
      *
      * @param file The `File` object to send.
      * @param destinationPath The relative path where the file should be saved on the receiving device.
      */
     fun sendFile(file: File, destinationPath: String) {
-        val streamPayload = Payload.fromStream(file.inputStream())
-        val wrapper = HttpRequestWrapper(
-            method = "POST",
-            path = "/send-file",
-            queryParams = "filename=$destinationPath&payloadId=${streamPayload.id}",
-            body = "",
-            sourceNodeId = endpointName
-        )
-        broadcast(wrapper)
-        nearbyConnectionsManager.sendPayload(
-            nearbyConnectionsManager.connectedPeers.value.toList(),
-            streamPayload
-        )
+        val fileId = UUID.randomUUID().toString()
+        val fileBytes = file.readBytes()
+        val chunks = fileBytes.asList().chunked(CHUNK_SIZE)
+        chunks.forEachIndexed { index, chunkData ->
+            val fileChunk = FileChunk(
+                fileId = fileId,
+                destinationPath = destinationPath,
+                chunkIndex = index,
+                totalChunks = chunks.size,
+                data = chunkData.toByteArray()
+            )
+            val networkMessage = NetworkMessage(
+                fileChunk = fileChunk
+            )
+            val payload = Json.encodeToString(networkMessage).toByteArray(Charsets.UTF_8)
+            nearbyConnectionsManager.sendPayload(
+                nearbyConnectionsManager.connectedPeers.value.toList(),
+                payload
+            )
+        }
     }
 
     private fun start() {
@@ -301,11 +264,47 @@ class BridgeService : Service() {
         logger.log("Service stopped.")
     }
 
+    internal fun handleIncomingData(fromEndpointId: String, data: ByteArray) {
+        serviceHardener.updateP2pMessageTime()
+        logger.runCatchingWithLogging {
+            val jsonString = data.toString(Charsets.UTF_8)
+            val networkMessage = Json.decodeFromString<NetworkMessage>(jsonString)
+
+            // 1. Check ID: Look up the messageId in a local seenMessageIds cache.
+            if (seenMessageIds.containsKey(networkMessage.messageId)) {
+                logger.log("Ignoring seen message: ${networkMessage.messageId}")
+                return@runCatchingWithLogging
+            }
+
+            // 3. If New, Process & Forward:
+            // Cache: Add the messageId to the seenMessageIds cache.
+            seenMessageIds[networkMessage.messageId] = System.currentTimeMillis()
+
+            // Process
+            networkMessage.httpRequest?.let { wrapper ->
+                CoroutineScope(ioDispatcher).launch {
+                    localHttpServer.dispatchRequest(wrapper)
+                }
+            }
+            networkMessage.fileChunk?.let { chunk ->
+                fileReassemblyManager.addChunk(chunk)
+            }
+
+            // Forward
+            val nextHopMessage = networkMessage.copy(hopCount = networkMessage.hopCount + 1)
+            val payload = Json.encodeToString(nextHopMessage).toByteArray(Charsets.UTF_8)
+            val otherPeers = nearbyConnectionsManager.connectedPeers.value.filter { it != fromEndpointId }
+            if (otherPeers.isNotEmpty()) {
+                nearbyConnectionsManager.sendPayload(otherPeers, payload)
+            }
+        }
+    }
+
     private fun listenForIncomingData() {
         CoroutineScope(ioDispatcher).launch {
             nearbyConnectionsManager.incomingPayloads.collect { (endpointId, data) ->
                 logger.log("Collected ${data.size} bytes from $endpointId from flow.")
-                handleIncomingData(data)
+                handleIncomingData(endpointId, data)
             }
         }
     }
@@ -330,5 +329,6 @@ class BridgeService : Service() {
         const val ACTION_STOP = "info.benjaminhill.localmesh.action.STOP"
         private const val CHANNEL_ID = "P2PBridgeServiceChannel"
         private const val TAG = "BridgeService"
+        private const val CHUNK_SIZE = 32 * 1024 // 32KB, max for BYTES payload
     }
 }
