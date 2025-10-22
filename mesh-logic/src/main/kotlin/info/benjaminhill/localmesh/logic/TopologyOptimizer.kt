@@ -71,11 +71,26 @@ class TopologyOptimizer(
         log("TopologyOptimizer.start()")
         scope.launch {
             listenForDiscoveredEndpoints()
+            listenForConnectionChanges()
             listenForIncomingPayloads()
             startGossip()
             startRewiringAnalysis()
             startIslandDiscoveryAnalysis()
             cleanupNodeHopCounts()
+        }
+    }
+
+    private fun CoroutineScope.listenForConnectionChanges() = launch {
+        connectionManager.connectedPeers.collect { currentPeers ->
+            // Remove any peers from our maps that we are no longer connected to.
+            val removedPeers = neighborPeerLists.keys.filter { it !in currentPeers }
+            if (removedPeers.isNotEmpty()) {
+                log("Peers disconnected: $removedPeers. Cleaning up maps.")
+                removedPeers.forEach {
+                    neighborPeerLists.remove(it)
+                    nodeHopCounts.remove(it)
+                }
+            }
         }
     }
 
@@ -225,10 +240,17 @@ class TopologyOptimizer(
         while (true) {
             delay(NODE_HOP_COUNT_EXPIRY_MS / 2) // Clean up twice as often as expiry
             val now = System.currentTimeMillis()
-            nodeHopCounts.entries.removeIf { (_, pair) ->
-                now - pair.second > NODE_HOP_COUNT_EXPIRY_MS
+            // To avoid ConcurrentModificationException, we identify expired keys first,
+            // then remove them in a separate step.
+            val expiredKeys = nodeHopCounts.entries
+                .filter { (_, pair) -> now - pair.second > NODE_HOP_COUNT_EXPIRY_MS }
+                .map { it.key }
+
+            if (expiredKeys.isNotEmpty()) {
+                log("Cleaning up expired node hop counts for: $expiredKeys")
+                expiredKeys.forEach { nodeHopCounts.remove(it) }
+                log("Cleaned up expired node hop counts. Current size: ${nodeHopCounts.size}")
             }
-            log("Cleaned up expired node hop counts. Current size: ${nodeHopCounts.size}")
         }
     }
 
