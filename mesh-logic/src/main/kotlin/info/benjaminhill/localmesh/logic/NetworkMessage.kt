@@ -17,6 +17,7 @@ data class FileChunk(
     /** The total number of chunks for this file. */
     val totalChunks: Int,
     /** The actual data of the chunk. Note: Requires special handling for ByteArray serialization. */
+    @Serializable(with = ByteArraySerializer::class)
     val data: ByteArray
 )
 
@@ -33,5 +34,7 @@ data class NetworkMessage(
     /** The HTTP request payload, if this is an HTTP message. */
     val httpRequest: HttpRequestWrapper? = null,
     /** The file chunk payload, if this is a file transfer message. */
-    val fileChunk: FileChunk? = null
+    val fileChunk: FileChunk? = null,
+    /** The peer list of the sending node, for topology gossip. */
+    val gossip: Map<String, List<String>>? = null
 )
