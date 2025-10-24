@@ -76,26 +76,50 @@ class NearbyConnectionsManager(
     private val seenMessageIds = ConcurrentHashMap<UUID, Long>()
 
     private val scope = CoroutineScope(Dispatchers.IO)
-    private var isDiscoveryModeActive = false
-    private var discoveryModeJob: Job? = null
 
+    override fun startDiscovery(payload: ByteArray) {
+        logger.runCatchingWithLogging {
+            // Strategy.P2P_CLUSTER is used as it supports M-to-N connections,
+            // which is suitable for a dynamic snake topology where multiple
+            // endpoints can be discovering or advertising simultaneously.
+            val advertisingOptions = AdvertisingOptions.Builder()
+                .setStrategy(Strategy.P2P_CLUSTER)
+                .setAdvertisingPayload(payload)
+                .build()
 
-    override fun start() {
-        logger.log("NearbyConnectionsManager.start()")
-        scope.launch {
-            // Per P2P_DOCS.md, simultaneous advertising/discovery can be unstable. Cycle between them.
-            launch {
-                while (true) {
-                    startAdvertising()
-                    delay(ADVERTISING_DURATION_MS)
-                    connectionsClient.stopAdvertising()
-
-                    startDiscovery()
-                    delay(DISCOVERY_DURATION_MS)
-                    connectionsClient.stopDiscovery()
-                }
+            connectionsClient.startAdvertising(
+                endpointName,
+                serviceId,
+                connectionLifecycleCallback,
+                advertisingOptions
+            ).addOnSuccessListener {
+                logger.log("Advertising started with connection count payload.")
+            }.addOnFailureListener { e ->
+                logger.e("Failed to start advertising", e)
             }
         }
+
+        logger.runCatchingWithLogging {
+            val discoveryOptions = DiscoveryOptions.Builder()
+                .setStrategy(Strategy.P2P_CLUSTER)
+                .build()
+
+            connectionsClient.startDiscovery(
+                serviceId,
+                endpointDiscoveryCallback,
+                discoveryOptions
+            ).addOnSuccessListener {
+                logger.log("Discovery started.")
+            }.addOnFailureListener { e ->
+                logger.e("Failed to start discovery", e)
+            }
+        }
+    }
+
+    override fun stopDiscovery() {
+        connectionsClient.stopAdvertising()
+        connectionsClient.stopDiscovery()
+        logger.log("Stopped advertising and discovery.")
     }
 
     override fun stop() {
@@ -126,59 +150,6 @@ class NearbyConnectionsManager(
 
     override fun sendPayload(endpointIds: List<String>, payload: ByteArray) {
         sendPayload(endpointIds, Payload.fromBytes(payload))
-    }
-
-    override fun enterDiscoveryMode() {
-        if (isDiscoveryModeActive) {
-            logger.log("Already in discovery mode. Ignoring request.")
-            return
-        }
-        logger.log("Entering time-limited island discovery mode for 20 seconds.")
-        isDiscoveryModeActive = true
-
-        // Cancel any previous job to be safe
-        discoveryModeJob?.cancel()
-
-        discoveryModeJob = scope.launch {
-            delay(20_000L)
-            if (isDiscoveryModeActive) {
-                logger.log("Island discovery timeout reached. Exiting discovery mode.")
-                isDiscoveryModeActive = false
-            }
-        }
-    }
-
-    private fun startAdvertising() = logger.runCatchingWithLogging {
-        // No longer a suspend fun because the Nearby API is listener-based and returns immediately.
-        // P2P_CLUSTER is a balanced strategy for a mesh network with multiple connections.
-        val advertisingOptions =
-            AdvertisingOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).build()
-        connectionsClient.startAdvertising(
-            endpointName,
-            serviceId,
-            connectionLifecycleCallback,
-            advertisingOptions
-        ).addOnSuccessListener {
-            logger.log("Advertising started.")
-        }.addOnFailureListener { e ->
-            logger.e("Failed to start advertising", e)
-        }
-    }
-
-    private fun startDiscovery() = logger.runCatchingWithLogging {
-        // No longer a suspend fun because the Nearby API is listener-based and returns immediately.
-        // P2P_CLUSTER is a balanced strategy for a mesh network with multiple connections.
-        val discoveryOptions =
-            DiscoveryOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).build()
-        connectionsClient.startDiscovery(
-            serviceId,
-            endpointDiscoveryCallback,
-            discoveryOptions
-        ).addOnSuccessListener {
-            logger.log("Discovery started.")
-        }.addOnFailureListener { e ->
-            logger.e("Failed to start discovery", e)
-        }
     }
 
 
@@ -269,17 +240,19 @@ class NearbyConnectionsManager(
         ) {
             logger.log("onEndpointFound: ${discoveredEndpointInfo.endpointName} (id:$endpointId)")
 
-            if (isDiscoveryModeActive) {
-                logger.log("In discovery mode, attempting to connect to new endpoint '$endpointId' to merge islands.")
-                isDiscoveryModeActive =
-                    false // Exit discovery mode immediately upon finding a candidate
-                discoveryModeJob?.cancel()
-                requestConnection(endpointId)
+            val theirConnectionCount = discoveredEndpointInfo.endpointInfo.firstOrNull()?.toInt()
+            if (theirConnectionCount == null) {
+                logger.log("Ignoring peer ${discoveredEndpointInfo.endpointName} due to missing connection count in payload.")
                 return
             }
 
-            scope.launch {
-                discoveredEndpoints.emit(endpointId)
+            if (theirConnectionCount < 2) {
+                logger.log("Peer ${discoveredEndpointInfo.endpointName} is a candidate (connections: $theirConnectionCount). Emitting for consideration.")
+                scope.launch {
+                    discoveredEndpoints.emit(endpointId)
+                }
+            } else {
+                logger.log("Ignoring peer ${discoveredEndpointInfo.endpointName} as it is already full (connections: $theirConnectionCount).")
             }
         }
 

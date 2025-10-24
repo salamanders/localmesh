@@ -20,9 +20,15 @@ interface ConnectionManager {
     val discoveredEndpoints: SharedFlow<String>
 
     /**
-     * Starts the connection manager, enabling discovery and advertising.
+     * Starts advertising and discovery.
+     * @param payload A small byte array to be broadcast to discovered endpoints.
      */
-    fun start()
+    fun startDiscovery(payload: ByteArray)
+
+    /**
+     * Stops advertising and discovery.
+     */
+    fun stopDiscovery()
 
     /**
      * Stops the connection manager, disconnecting from all peers.
@@ -48,8 +54,4 @@ interface ConnectionManager {
      */
     fun disconnectFrom(endpointId: String)
 
-    /**
-     * Enters a special, time-limited discovery mode to find new network islands.
-     */
-    fun enterDiscoveryMode()
 }
