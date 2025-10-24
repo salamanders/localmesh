@@ -24,20 +24,28 @@ class SimulatedConnectionManager(
     override val incomingPayloads = MutableSharedFlow<Pair<String, ByteArray>>()
     override val discoveredEndpoints = MutableSharedFlow<String>()
 
+    var advertisingPayload: ByteArray = ByteArray(0)
+
     init {
         SimulationRegistry.register(this)
     }
 
-    override fun start() {
-        if (startWithDiscovery) {
-            coroutineScope.launch {
-                SimulationRegistry.getPeers().forEach { peer ->
-                    if (peer.id != this@SimulatedConnectionManager.id) {
-                        discoveredEndpoints.emit(peer.id)
-                    }
+    override fun startDiscovery(payload: ByteArray) {
+        this.advertisingPayload = payload
+        // Simulate discovering all existing peers in the network.
+        coroutineScope.launch {
+            SimulationRegistry.getPeers().forEach { peer ->
+                if (peer.id != this@SimulatedConnectionManager.id) {
+                    // In a real scenario, the discovery logic would filter based on the payload.
+                    // Here, we emit all peers and let the consuming logic (e.g., BridgeService) decide.
+                    this.announcePeer(peer.id)
                 }
             }
         }
+    }
+
+    override fun stopDiscovery() {
+        // In this simulation, discovery is a one-shot event, so this is a no-op.
     }
 
     override fun stop() {
@@ -86,17 +94,6 @@ class SimulatedConnectionManager(
     internal fun announcePeer(peerId: String) {
         coroutineScope.launch {
             discoveredEndpoints.emit(peerId)
-        }
-    }
-
-    override fun enterDiscoveryMode() {
-        // Simulate finding all other peers in the network.
-        coroutineScope.launch {
-            SimulationRegistry.getPeers().forEach { peer ->
-                if (peer.id != this@SimulatedConnectionManager.id && peer.id !in connectedPeers.value) {
-                    discoveredEndpoints.emit(peer.id)
-                }
-            }
         }
     }
 }

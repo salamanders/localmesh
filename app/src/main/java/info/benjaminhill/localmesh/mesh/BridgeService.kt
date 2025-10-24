@@ -19,7 +19,7 @@ import info.benjaminhill.localmesh.R
 import info.benjaminhill.localmesh.logic.FileChunk
 import info.benjaminhill.localmesh.logic.HttpRequestWrapper
 import info.benjaminhill.localmesh.logic.NetworkMessage
-import info.benjaminhill.localmesh.logic.TopologyOptimizer
+import info.benjaminhill.localmesh.logic.SnakeConnectionAdvisor
 import info.benjaminhill.localmesh.util.AppLogger
 import info.benjaminhill.localmesh.util.LogFileWriter
 import info.benjaminhill.localmesh.util.PermissionUtils
@@ -27,6 +27,8 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.serialization.cbor.Cbor
 import kotlinx.serialization.decodeFromByteArray
@@ -58,7 +60,7 @@ class BridgeService : Service() {
     internal lateinit var nearbyConnectionsManager: NearbyConnectionsManager
     internal lateinit var localHttpServer: LocalHttpServer
     internal lateinit var serviceHardener: ServiceHardener
-    internal lateinit var topologyOptimizer: TopologyOptimizer
+    internal lateinit var snakeConnectionAdvisor: SnakeConnectionAdvisor
     private lateinit var logger: AppLogger
 
     lateinit var endpointName: String
@@ -99,14 +101,13 @@ class BridgeService : Service() {
                     context = this,
                     endpointName = endpointName,
                     logger = logger,
-                    maxConnections = TopologyOptimizer.TARGET_CONNECTIONS + 1
+                    maxConnections = SNAKE_MAX_CONNECTIONS
                 )
             }
-            if (!::topologyOptimizer.isInitialized) {
-                topologyOptimizer = TopologyOptimizer(
-                    connectionManager = nearbyConnectionsManager,
+            if (!::snakeConnectionAdvisor.isInitialized) {
+                snakeConnectionAdvisor = SnakeConnectionAdvisor(
+                    ownEndpointId = endpointName,
                     log = { msg: String -> logger.log(msg) },
-                    endpointName = endpointName
                 )
             }
             logger.log("onCreate() finished successfully")
@@ -221,11 +222,48 @@ class BridgeService : Service() {
         // The type hints to the OS that this service is for P2P connections.
         startForeground(1, notification, FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
         listenForIncomingData()
-        nearbyConnectionsManager.start()
-        topologyOptimizer.start()
+        manageSnakeConnections()
         serviceHardener.start()
         currentState = BridgeState.Running
         logger.log("Service started and running.")
+    }
+
+    private fun manageSnakeConnections() {
+        serviceScope.launch {
+            // Listen for connection changes to update the advisor and discovery state
+            nearbyConnectionsManager.connectedPeers.collectLatest { peers ->
+                val peerCount = peers.size
+                snakeConnectionAdvisor.setConnectionCount(peerCount)
+                if (snakeConnectionAdvisor.shouldBeDiscovering()) {
+                    val payload = byteArrayOf(peerCount.toByte())
+                    nearbyConnectionsManager.startDiscovery(payload)
+                } else {
+                    nearbyConnectionsManager.stopDiscovery()
+                }
+            }
+        }
+
+        serviceScope.launch {
+            // Listen for newly discovered endpoints and decide whether to connect
+            nearbyConnectionsManager.discoveredEndpoints.collect { endpointId ->
+                if (snakeConnectionAdvisor.canConnectToPeer(endpointId)) {
+                    nearbyConnectionsManager.connectTo(endpointId)
+                }
+            }
+        }
+
+        serviceScope.launch {
+            // Periodically broadcast snake topology gossip
+            while (true) {
+                delay(GOSSIP_INTERVAL_MS)
+                val gossipMessage = snakeConnectionAdvisor.createGossipMessage()
+                val payload = Cbor.encodeToByteArray(gossipMessage)
+                val currentPeers = nearbyConnectionsManager.connectedPeers.value.toList()
+                if (currentPeers.isNotEmpty()) {
+                    nearbyConnectionsManager.sendPayload(currentPeers, payload)
+                }
+            }
+        }
     }
 
     private fun checkHardwareAndPermissions(): Boolean {
@@ -276,7 +314,7 @@ class BridgeService : Service() {
         currentState = BridgeState.Stopping
 
         serviceHardener.stop()
-        topologyOptimizer.stop()
+        nearbyConnectionsManager.stopDiscovery()
         nearbyConnectionsManager.stop()
         localHttpServer.stop()
         // True to remove the notification, ensuring a clean stop.
@@ -304,6 +342,7 @@ class BridgeService : Service() {
             seenMessageIds[networkMessage.messageId] = System.currentTimeMillis()
 
             // Process
+            snakeConnectionAdvisor.handleGossipMessage(networkMessage)
             networkMessage.httpRequest?.let { wrapper ->
                 serviceScope.launch {
                     localHttpServer.dispatchRequest(wrapper)
@@ -354,5 +393,7 @@ class BridgeService : Service() {
         private const val CHANNEL_ID = "P2PBridgeServiceChannel"
         private const val TAG = "BridgeService"
         private const val CHUNK_SIZE = 32 * 1024 // 32KB, max for BYTES payload
+        private const val GOSSIP_INTERVAL_MS = 30 * 1000L
+        private const val SNAKE_MAX_CONNECTIONS = 2
     }
 }
