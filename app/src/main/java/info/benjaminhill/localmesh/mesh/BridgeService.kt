@@ -229,25 +229,40 @@ class BridgeService : Service() {
     }
 
     private fun checkHardwareAndPermissions(): Boolean {
+        logger.log("Checking hardware and permissions...")
+
+        // Bluetooth check
         val bluetoothManager = getSystemService(BLUETOOTH_SERVICE) as BluetoothManager
-        if (bluetoothManager.adapter == null || !bluetoothManager.adapter.isEnabled) {
-            logger.e("Bluetooth is not enabled")
+        if (bluetoothManager.adapter == null) {
+            logger.e("Fatal: Bluetooth adapter not found.")
             return false
         }
+        if (!bluetoothManager.adapter.isEnabled) {
+            logger.e("Fatal: Bluetooth is not enabled.")
+            return false
+        }
+        logger.log("Bluetooth is enabled.")
 
+        // Wi-Fi check
         val wifiManager = getSystemService(WIFI_SERVICE) as WifiManager
         if (!wifiManager.isWifiEnabled) {
-            logger.e("Wi-Fi is not enabled")
+            logger.e("Fatal: Wi-Fi is not enabled.")
+            return false
+        }
+        logger.log("Wi-Fi is enabled.")
+
+        // Permissions check
+        val missingPermissions = PermissionUtils.getDangerousPermissions(this).filter { permission ->
+            checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED
+        }
+
+        if (missingPermissions.isNotEmpty()) {
+            missingPermissions.forEach { logger.e("Fatal: Missing permission: $it") }
             return false
         }
 
-        return PermissionUtils.getDangerousPermissions(this).all { permission ->
-            (checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED).also {
-                if (!it) {
-                    logger.e("Permission not granted: $permission")
-                }
-            }
-        }
+        logger.log("All permissions granted.")
+        return true
     }
 
     override fun onDestroy() {
